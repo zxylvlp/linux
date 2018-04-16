@@ -71,17 +71,22 @@
  * This is default implementation.
  * Architectures and sub-architectures can override this.
  */
+// 调度时钟，返回以ns为单位的当前时间
 unsigned long long __weak sched_clock(void)
 {
+    // 返回当前经历过的tick数除以每秒tick数乘以一秒的ns数
 	return (unsigned long long)(jiffies - INITIAL_JIFFIES)
 					* (NSEC_PER_SEC / HZ);
 }
 EXPORT_SYMBOL_GPL(sched_clock);
 
+// 调度器时钟是否正在运行
 __read_mostly int sched_clock_running;
 
+// 初始化调度时钟
 void sched_clock_init(void)
 {
+    // 将调度器时钟是否正在运行设置为真
 	sched_clock_running = 1;
 }
 

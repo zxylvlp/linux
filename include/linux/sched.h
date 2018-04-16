@@ -327,14 +327,23 @@ struct load_weight {
  * Then it is the load_weight's responsibility to consider overflow
  * issues.
  */
+// 调度平均
 struct sched_avg {
+    // 最近更新时间，以ns为单位，一般来说对齐到us
 	u64				last_update_time;
+	// 负载和，计入了阻塞进程和可运行进程
 	u64				load_sum;
+	// 可运行负载和
 	u64				runnable_load_sum;
+	// 利用率和，计入了阻塞进程和可运行进程
 	u32				util_sum;
+	// 周期贡献，以us为单位，是最近更新时间对齐到ms后多出来的时间
 	u32				period_contrib;
+	// 负载平均，计入了阻塞进程和可运行进程
 	unsigned long			load_avg;
+	// 可运行负载平均
 	unsigned long			runnable_load_avg;
+	// 利用率平均，计入了阻塞进程和可运行进程
 	unsigned long			util_avg;
 };
 

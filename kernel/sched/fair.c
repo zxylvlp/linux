@@ -303,6 +303,7 @@ static inline struct cfs_rq *cfs_rq_of(struct sched_entity *se)
 }
 
 /* runqueue "owned" by this group */
+// 获得当前调度单元（非task）拥有的cfsrq
 static inline struct cfs_rq *group_cfs_rq(struct sched_entity *grp)
 {
 	return grp->my_q;
@@ -3052,14 +3053,17 @@ static inline void cfs_rq_util_change(struct cfs_rq *cfs_rq)
  * Approximate:
  *   val * y^n,    where y^32 ~= 0.5 (~1 scheduling period)
  */
+// 衰减负载，返回将val衰减n个周期后的值
 static u64 decay_load(u64 val, u64 n)
 {
 	unsigned int local_n;
 
+    // 如果n > 63个32us则返回0
 	if (unlikely(n > LOAD_AVG_PERIOD * 63))
 		return 0;
 
 	/* after bounds checking we can collapse to 32-bit */
+    // 将n折叠到32bit
 	local_n = n;
 
 	/*
@@ -3069,22 +3073,27 @@ static u64 decay_load(u64 val, u64 n)
 	 *
 	 * To achieve constant time decay_load.
 	 */
+    // 如果n大于32us，则将先按照32us为单位右移
 	if (unlikely(local_n >= LOAD_AVG_PERIOD)) {
 		val >>= local_n / LOAD_AVG_PERIOD;
 		local_n %= LOAD_AVG_PERIOD;
 	}
 
+    // 将剩下的查表后撑到val上
 	val = mul_u64_u32_shr(val, runnable_avg_yN_inv[local_n], 32);
 	return val;
 }
 
+// 积累pelt段,即返回指定时间段加衰减权后的值
 static u32 __accumulate_pelt_segments(u64 periods, u32 d1, u32 d3)
 {
+    // 将c3赋值为d3
 	u32 c1, c2, c3 = d3; /* y^0 == 1 */
 
 	/*
 	 * c1 = d1 y^p
 	 */
+    // 将c1赋值为d1衰减指定周期
 	c1 = decay_load((u64)d1, periods);
 
 	/*
@@ -3096,8 +3105,11 @@ static u32 __accumulate_pelt_segments(u64 periods, u32 d1, u32 d3)
 	 *    = 1024 ( \Sum y^n - \Sum y^n - y^0 )
 	 *              n=0        n=p
 	 */
+    // d1,d3都是小于1024的，衰减的最小单位是ms，dn的最小单位是us
+    // 将c2赋值为上面公式的值
 	c2 = LOAD_AVG_MAX - decay_load(LOAD_AVG_MAX, periods) - 1024;
 
+    // 返回c1,c2,c3的和
 	return c1 + c2 + c3;
 }
 
@@ -3122,46 +3134,67 @@ static u32 __accumulate_pelt_segments(u64 periods, u32 d1, u32 d3)
  *      d1 y^p + 1024 \Sum y^n + d3 y^0		(Step 2)
  *                     n=1
  */
+// 积累总和
 static __always_inline u32
 accumulate_sum(u64 delta, int cpu, struct sched_avg *sa,
 	       unsigned long load, unsigned long runnable, int running)
 {
 	unsigned long scale_freq, scale_cpu;
+    // 将贡献值初始化为delta
 	u32 contrib = (u32)delta; /* p == 0 -> delta < 1024 */
 	u64 periods;
 
+    // 获得当前cpu频率与最大频率的比值乘以1024
 	scale_freq = arch_scale_freq_capacity(cpu);
+    // 获得当前cpu计算能力与所有cpu计算能力的比值乘以1024
 	scale_cpu = arch_scale_cpu_capacity(NULL, cpu);
 
+    // 将delta值加上sa上次的的周期外贡献
 	delta += sa->period_contrib;
+    // 将周期数初始化为delta除以1024
 	periods = delta / 1024; /* A period is 1024us (~1ms) */
 
 	/*
 	 * Step 1: decay old *_sum if we crossed period boundaries.
 	 */
+    // 如果跨越了时段边界
 	if (periods) {
+        // 将sa的load和衰减指定周期
 		sa->load_sum = decay_load(sa->load_sum, periods);
+        // 将sa的可运行load和衰减指定周期
 		sa->runnable_load_sum =
 			decay_load(sa->runnable_load_sum, periods);
+        // 将sa的利用率和衰减指定周期
 		sa->util_sum = decay_load((u64)(sa->util_sum), periods);
 
 		/*
 		 * Step 2
 		 */
+        // 将delta对1024取模
 		delta %= 1024;
+        // 计算积累plet段为贡献值
 		contrib = __accumulate_pelt_segments(periods,
 				1024 - sa->period_contrib, delta);
 	}
+    // 将sa的周期外贡献设置为delta
 	sa->period_contrib = delta;
 
+    // 将贡献值进行频率容量scale
 	contrib = cap_scale(contrib, scale_freq);
+    // 如果load不为0
 	if (load)
+        // 将sa的负载和加上load乘以贡献
 		sa->load_sum += load * contrib;
+    // 如果可运行
 	if (runnable)
+        // 将sa的可运行负载和加上可运行乘以贡献
 		sa->runnable_load_sum += runnable * contrib;
+    // 如果正在运行
 	if (running)
+        // 将sa的利用率和加上贡献乘以cpu scale
 		sa->util_sum += contrib * scale_cpu;
 
+    // 返回周期数
 	return periods;
 }
 
@@ -3193,19 +3226,24 @@ accumulate_sum(u64 delta, int cpu, struct sched_avg *sa,
  *   load_avg = u_0` + y*(u_0 + u_1*y + u_2*y^2 + ... )
  *            = u_0 + u_1*y + u_2*y^2 + ... [re-labeling u_i --> u_{i+1}]
  */
+// 更新负载总和
 static __always_inline int
 ___update_load_sum(u64 now, int cpu, struct sched_avg *sa,
 		  unsigned long load, unsigned long runnable, int running)
 {
 	u64 delta;
 
+    // 将当前时间减去最近更新时间
 	delta = now - sa->last_update_time;
 	/*
 	 * This should only happen when time goes backwards, which it
 	 * unfortunately does during sched clock init when we swap over to TSC.
 	 */
+    // 如果delta小于0
 	if ((s64)delta < 0) {
+        // 将最近更新时间设置为现在
 		sa->last_update_time = now;
+        // 返回0
 		return 0;
 	}
 
@@ -3213,10 +3251,14 @@ ___update_load_sum(u64 now, int cpu, struct sched_avg *sa,
 	 * Use 1024ns as the unit of measurement since it's a reasonable
 	 * approximation of 1us and fast to compute.
 	 */
+    // 将delta除以1024
+    // 最近更新时间的单位是1ns，算累计和的单位是1us，其period是1ms
 	delta >>= 10;
+    // 如果delta为0则返回0
 	if (!delta)
 		return 0;
 
+    // 将最近更新时间加上delta乘以1024
 	sa->last_update_time += delta << 10;
 
 	/*
@@ -3228,6 +3270,7 @@ ___update_load_sum(u64 now, int cpu, struct sched_avg *sa,
 	 * this happens during idle_balance() which calls
 	 * update_blocked_averages()
 	 */
+    // 如果load为0则将正在运行和可以运行设置为0
 	if (!load)
 		runnable = running = 0;
 
@@ -3238,20 +3281,26 @@ ___update_load_sum(u64 now, int cpu, struct sched_avg *sa,
 	 * Step 1: accumulate *_sum since last_update_time. If we haven't
 	 * crossed period boundaries, finish.
 	 */
+    // 积累总和,如果没有跨越1ms则返回0
 	if (!accumulate_sum(delta, cpu, sa, load, runnable, running))
 		return 0;
 
+    // 否则返回1
 	return 1;
 }
 
+// 更新负载平均
+// 负载和没有计入负载load，负载平均计入了负载load所以值一定大于0
 static __always_inline void
 ___update_load_avg(struct sched_avg *sa, unsigned long load, unsigned long runnable)
 {
+    // 定义除数为最大负载平局减去当前周期还没用的时间
 	u32 divider = LOAD_AVG_MAX - 1024 + sa->period_contrib;
 
 	/*
 	 * Step 2: update *_avg.
 	 */
+    // 将负载乘以负载和除以除数算得负载平均，其余同理
 	sa->load_avg = div_u64(load * sa->load_sum, divider);
 	sa->runnable_load_avg =	div_u64(runnable * sa->runnable_load_sum, divider);
 	sa->util_avg = sa->util_sum / divider;
@@ -3259,29 +3308,42 @@ ___update_load_avg(struct sched_avg *sa, unsigned long load, unsigned long runna
 
 /*
  * sched_entity:
- *
+ * 对于调度单元
  *   task:
+ *   对于任务
  *     se_runnable() == se_weight()
+ *   对于任务来说se_runnable和se_weight相等
  *
  *   group: [ see update_cfs_group() ]
+ *   对于任务组
  *     se_weight()   = tg->weight * grq->load_avg / tg->load_avg
  *     se_runnable() = se_weight(se) * grq->runnable_load_avg / grq->load_avg
+ *   对于任务组来说se_weight是任务组的权重乘以组rq的平均负载除以任务组的平均负载
+ *   对于任务组来说se_runnable是任务组的权重乘以组rq的可运行平均负载除以任务组的平均负载
  *
  *   load_sum := runnable_sum
+ *   负载和是可运行和
  *   load_avg = se_weight(se) * runnable_avg
+ *   负载平均是可运行平均乘以se_weight
  *
  *   runnable_load_sum := runnable_sum
+ *   可运行负载和是可运行和
  *   runnable_load_avg = se_runnable(se) * runnable_avg
+ *   可运行负载平均是可运行平均乘以se_runnable
  *
  * XXX collapse load_sum and runnable_load_sum
  *
  * cfq_rs:
- *
+ * 对于cfsrq
  *   load_sum = \Sum se_weight(se) * se->avg.load_sum
+ *   负载和是所有调度项负载和乘以权重
  *   load_avg = \Sum se->avg.load_avg
+ *   负载平均是所有调度项负载平均的和
  *
  *   runnable_load_sum = \Sum se_runnable(se) * se->avg.runnable_load_sum
  *   runnable_load_avg = \Sum se->avg.runable_load_avg
+ *   同上
+ *   ，
  */
 
 static int
@@ -3291,26 +3353,33 @@ __update_load_avg_blocked_se(u64 now, int cpu, struct sched_entity *se)
 		se->runnable_weight = se->load.weight;
 
 	if (___update_load_sum(now, cpu, &se->avg, 0, 0, 0)) {
-		___update_load_avg(&se->avg, se_weight(se), se_runnable(se));
+		__update_load_avg(&se->avg, se_weight(se), se_runnable(se));
 		return 1;
 	}
 
 	return 0;
 }
 
+// 更新调度单元的loadavg
 static int
 __update_load_avg_se(u64 now, int cpu, struct cfs_rq *cfs_rq, struct sched_entity *se)
 {
+    // 如果调度单元是任务
 	if (entity_is_task(se))
+        // 将调度单元的可运行权重设置为调度单元负载权重
 		se->runnable_weight = se->load.weight;
 
+    // 更新负载和
 	if (___update_load_sum(now, cpu, &se->avg, !!se->on_rq, !!se->on_rq,
 				cfs_rq->curr == se)) {
 
+        // 更新负载平均
 		___update_load_avg(&se->avg, se_weight(se), se_runnable(se));
+        // 返回更新成功
 		return 1;
 	}
 
+    // 返回未更新
 	return 0;
 }
 
@@ -3345,18 +3414,25 @@ __update_load_avg_cfs_rq(u64 now, int cpu, struct cfs_rq *cfs_rq)
  *
  * Updating tg's load_avg is necessary before update_cfs_share().
  */
+// 更新任务组的负载平均。一个任务组会对应多个cfsrq，
+// 一个cfsrq的负载平均发生变化后会利用它和上次的差值去更新任务组的负载平均。
 static inline void update_tg_load_avg(struct cfs_rq *cfs_rq, int force)
 {
+    // 将cfsrq的负载平均减去cfsrq任务组的负载平均贡献值
 	long delta = cfs_rq->avg.load_avg - cfs_rq->tg_load_avg_contrib;
 
 	/*
 	 * No need to update load_avg for root_task_group as it is not used.
 	 */
+    // 如果任务组是根任务组,则直接返回
 	if (cfs_rq->tg == &root_task_group)
 		return;
 
+    // 如果强制更新或者delta大于cfsrq任务组负载平均贡献值的64分之1
 	if (force || abs(delta) > cfs_rq->tg_load_avg_contrib / 64) {
+        // 将delta加到cfsrq的任务组的负载平均上
 		atomic_long_add(delta, &cfs_rq->tg->load_avg);
+        // 将cfsrq的任务组负载平均贡献值设置为cfsrq当前的负载平均
 		cfs_rq->tg_load_avg_contrib = cfs_rq->avg.load_avg;
 	}
 }
@@ -3479,12 +3555,19 @@ void set_task_rq_fair(struct sched_entity *se,
  *
  */
 
+// 更新任务组cfs利用率，参数cfsrq是se所属的cfsrq，参数se是要计算的调度单元
+// 参数gcfsrq是se拥有的cfsrq
+// 注意这里是用gcfsrq更新se和cfsrq
+// 这里的利用率指的是cpu利用率与权重无关
+// 问题：avg和sum之间的比例一定是固定的？那为什么要维护两个？
 static inline void
 update_tg_cfs_util(struct cfs_rq *cfs_rq, struct sched_entity *se, struct cfs_rq *gcfs_rq)
 {
+    // 将gcfsrq的平均利用率减去调度单元的平均利用率
 	long delta = gcfs_rq->avg.util_avg - se->avg.util_avg;
 
 	/* Nothing to update */
+	// 如果delta为0直接返回
 	if (!delta)
 		return;
 
@@ -3497,45 +3580,63 @@ update_tg_cfs_util(struct cfs_rq *cfs_rq, struct sched_entity *se, struct cfs_rq
 	 */
 
 	/* Set new sched_entity's utilization */
+	// 将调度单元的平均利用率设置为gcfrq的平均利用率
 	se->avg.util_avg = gcfs_rq->avg.util_avg;
+	// 将调度单元的利用率和设置为平均利用率乘以最大负载平均
 	se->avg.util_sum = se->avg.util_avg * LOAD_AVG_MAX;
 
 	/* Update parent cfs_rq utilization */
+	// 利用delta更新cfsrq的利用率平均和利用率和
 	add_positive(&cfs_rq->avg.util_avg, delta);
 	cfs_rq->avg.util_sum = cfs_rq->avg.util_avg * LOAD_AVG_MAX;
 }
 
+// 更新任务组cfs可运行，参数cfsrq是se所属的cfsrq，参数se是要计算的调度单元
+// 参数gcfsrq是se拥有的cfsrq
+// 这里的可运行指的是负载
+// 注意这里是用gcfsrq更新se和cfsrq
 static inline void
 update_tg_cfs_runnable(struct cfs_rq *cfs_rq, struct sched_entity *se, struct cfs_rq *gcfs_rq)
 {
+    // 获得组cfsrq的传播可运行和
 	long delta_avg, running_sum, runnable_sum = gcfs_rq->prop_runnable_sum;
 	unsigned long runnable_load_avg, load_avg;
+    // 将负载和初始化为0
 	u64 runnable_load_sum, load_sum = 0;
 	s64 delta_sum;
 
+    // 如果可运行和为0则直接返回
 	if (!runnable_sum)
 		return;
 
+    // 将组cfsrq的传播可运行和清0
 	gcfs_rq->prop_runnable_sum = 0;
 
+    // 如果可运行和大于等于0
 	if (runnable_sum >= 0) {
 		/*
 		 * Add runnable; clip at LOAD_AVG_MAX. Reflects that until
 		 * the CPU is saturated running == runnable.
 		 */
+        // 将可运行和加上调度单元的平均负载和
 		runnable_sum += se->avg.load_sum;
+        // 将可运行和限制在最大负载平均
 		runnable_sum = min(runnable_sum, (long)LOAD_AVG_MAX);
+	// 如果可运行和小于0
 	} else {
 		/*
 		 * Estimate the new unweighted runnable_sum of the gcfs_rq by
 		 * assuming all tasks are equally runnable.
 		 */
+	    // 如果组cfsrq的负载权重不为0
 		if (scale_load_down(gcfs_rq->load.weight)) {
+    	    // 将负载和设置为组cfsrq的负载和除以组cfsrq的负载权重
 			load_sum = div_s64(gcfs_rq->avg.load_sum,
 				scale_load_down(gcfs_rq->load.weight));
 		}
 
 		/* But make sure to not inflate se's runnable */
+		// 将可运行和设置为调度单元负载和和计算出来的负载和的最小值
 		runnable_sum = min(se->avg.load_sum, load_sum);
 	}
 
@@ -3544,62 +3645,100 @@ update_tg_cfs_runnable(struct cfs_rq *cfs_rq, struct sched_entity *se, struct cf
 	 * As running sum is scale with cpu capacity wehreas the runnable sum
 	 * is not we rescale running_sum 1st
 	 */
+	// runnable_sum指可运行和，是所有负载和加起来，不带权重的
+	// load_sum是负载和
+	// load_avg是load_sum除以最大负载平均
+	// cfsrq的load_avg和load_sum都是带权重的
+	// se的load_avg是带权重的，load_sum是不带权重的
+
+	// 将运行和设置成cpu利用率和除以cpu容量，即运行时间，也就是se的运行和
 	running_sum = se->avg.util_sum /
 		arch_scale_cpu_capacity(NULL, cpu_of(rq_of(cfs_rq)));
+	// 将可运行和设置为可运行和与运行和的最大值
 	runnable_sum = max(runnable_sum, running_sum);
 
+	// 将可运行和乘以权重获得负载和
 	load_sum = (s64)se_weight(se) * runnable_sum;
+	// 将负载和除以最大负载平均即时间，得到负载平均
 	load_avg = div_s64(load_sum, LOAD_AVG_MAX);
 
+	// 将负载和减去当前调度单元负载和得到增量和
 	delta_sum = load_sum - (s64)se_weight(se) * se->avg.load_sum;
+	// 将负载平均减去当前调度单元负载平均得到增量平均
 	delta_avg = load_avg - se->avg.load_avg;
 
+	// 将当前调度单元负载和与负载平均修改为计算出来的可运行和(不带权重)和负载平均
 	se->avg.load_sum = runnable_sum;
 	se->avg.load_avg = load_avg;
+	// 用增量和与增量平均修改cfsrq的负载和与负载平均
 	add_positive(&cfs_rq->avg.load_avg, delta_avg);
 	add_positive(&cfs_rq->avg.load_sum, delta_sum);
 
+	// 将可运行和乘以可运行权重获得可运行负载和
 	runnable_load_sum = (s64)se_runnable(se) * runnable_sum;
+	// 将可运行负载和除以时间得到可运行负载平均
 	runnable_load_avg = div_s64(runnable_load_sum, LOAD_AVG_MAX);
+	// 将可运行负载和减去调度单元的权重乘以可运行负载和得到增量和
 	delta_sum = runnable_load_sum - se_weight(se) * se->avg.runnable_load_sum;
+	// 将可运行负载平均减去调度单元的可运行负载平均得到增量平均
 	delta_avg = runnable_load_avg - se->avg.runnable_load_avg;
 
+	// se的可运行负载和设置为可运行和(不带权重)
 	se->avg.runnable_load_sum = runnable_sum;
+	// se的可运行负载平均设置为可运行负载平均
 	se->avg.runnable_load_avg = runnable_load_avg;
 
+	// 如果调度单元在队列上
 	if (se->on_rq) {
+	    // 用两个delta值更新所在队列的可运行负载和与平均
 		add_positive(&cfs_rq->avg.runnable_load_avg, delta_avg);
 		add_positive(&cfs_rq->avg.runnable_load_sum, delta_sum);
 	}
 }
 
+// 添加任务组cfs传播，参数是se所属的cfsrq和se拥有的gcfsrq传播上来的可运行和
 static inline void add_tg_cfs_propagate(struct cfs_rq *cfs_rq, long runnable_sum)
 {
+    // 将cfsrq的是否传播设置成1
 	cfs_rq->propagate = 1;
+	// 将cfsrq的传播可运行和加上gcfrq传播上来的可运行和
 	cfs_rq->prop_runnable_sum += runnable_sum;
+	// 传播之后propagate将被清0，prop_runnable_sum也将在update_tg_cfs_runnable中
+	// 被清0
 }
 
 /* Update task and its cfs_rq load average */
+// 传播调度单元负载平均，当前调度单元拥有cfrq
 static inline int propagate_entity_load_avg(struct sched_entity *se)
 {
 	struct cfs_rq *cfs_rq, *gcfs_rq;
 
+    // 如果调度单元是任务则返回0
 	if (entity_is_task(se))
 		return 0;
 
+    // 获得调度单元拥有的cfsrq
 	gcfs_rq = group_cfs_rq(se);
+    // 如果该cfsrq的是否传播为fase则直接返回
 	if (!gcfs_rq->propagate)
 		return 0;
 
+    // 重置该cfsrq的是否传播回
 	gcfs_rq->propagate = 0;
 
+    // 获得调度单元从属的cfsrq
 	cfs_rq = cfs_rq_of(se);
 
+    // 将拥有的cfsrq的可运行数量传播给从属的cfsrq
+    // 将利用标志位逐级向上传播
 	add_tg_cfs_propagate(cfs_rq, gcfs_rq->prop_runnable_sum);
 
+	// 利用任务组gcfsrq更新se和cfsrq的利用率
 	update_tg_cfs_util(cfs_rq, se, gcfs_rq);
+	// 利用任务组gcfsrq更新se和cfsrq的可运行
 	update_tg_cfs_runnable(cfs_rq, se, gcfs_rq);
 
+	// 返回成功
 	return 1;
 }
 
@@ -3662,6 +3801,7 @@ static inline void add_tg_cfs_propagate(struct cfs_rq *cfs_rq, long runnable_sum
  * Since both these conditions indicate a changed cfs_rq->avg.load we should
  * call update_tg_load_avg() when this function returns true.
  */
+// 看到这里
 static inline int
 update_cfs_rq_load_avg(u64 now, struct cfs_rq *cfs_rq)
 {
@@ -3783,9 +3923,11 @@ static void detach_entity_load_avg(struct cfs_rq *cfs_rq, struct sched_entity *s
 // 更新任务和它cfsrq的平均负载
 static inline void update_load_avg(struct cfs_rq *cfs_rq, struct sched_entity *se, int flags)
 {
-    // 
+    // 获得cfsrq的时钟
 	u64 now = cfs_rq_clock_task(cfs_rq);
+    // 获得cfsrq的rq
 	struct rq *rq = rq_of(cfs_rq);
+    // 获得rq的cpu
 	int cpu = cpu_of(rq);
 	int decayed;
 
@@ -3793,6 +3935,7 @@ static inline void update_load_avg(struct cfs_rq *cfs_rq, struct sched_entity *s
 	 * Track task load average for carrying it to new CPU after migrated, and
 	 * track group sched_entity load average for task_h_load calc in migration
 	 */
+    // 
 	if (se->avg.last_update_time && !(flags & SKIP_AGE_LOAD))
 		__update_load_avg_se(now, cpu, cfs_rq, se);
 

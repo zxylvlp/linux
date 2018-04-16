@@ -11,4 +11,6 @@ static const u32 runnable_avg_yN_inv[] = {
 };
 
 #define LOAD_AVG_PERIOD 32
+// 多次累计1024得到的值
+// 注意这个和util的1024与load的NICE0LOAD无关，因此算avg时要除以这个值
 #define LOAD_AVG_MAX 47742
