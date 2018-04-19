@@ -3383,18 +3383,22 @@ __update_load_avg_se(u64 now, int cpu, struct cfs_rq *cfs_rq, struct sched_entit
 	return 0;
 }
 
+// 更新cfsrq的负载平均，返回是否更新过了，同时也意味着原来的数据是否被衰减过
 static int
 __update_load_avg_cfs_rq(u64 now, int cpu, struct cfs_rq *cfs_rq)
 {
+    // 更新负载和
 	if (___update_load_sum(now, cpu, &cfs_rq->avg,
 				scale_load_down(cfs_rq->load.weight),
 				scale_load_down(cfs_rq->runnable_weight),
 				cfs_rq->curr != NULL)) {
-
+	    // 更新负载平均
 		___update_load_avg(&cfs_rq->avg, 1, 1);
+		// 返回更新了
 		return 1;
 	}
 
+	// 返回没有更新
 	return 0;
 }
 
@@ -3801,19 +3805,26 @@ static inline void add_tg_cfs_propagate(struct cfs_rq *cfs_rq, long runnable_sum
  * Since both these conditions indicate a changed cfs_rq->avg.load we should
  * call update_tg_load_avg() when this function returns true.
  */
-// 看到这里
+// 更新cfsrq的负载平均，参数一个是当前时间戳，一个是要更新的cfsrq，返回值是是否退化
 static inline int
 update_cfs_rq_load_avg(u64 now, struct cfs_rq *cfs_rq)
 {
+    // 初始化删除的负载，删除的利用率，删除的可运行和为0
 	unsigned long removed_load = 0, removed_util = 0, removed_runnable_sum = 0;
+	// 获得cfsrq的平均
 	struct sched_avg *sa = &cfs_rq->avg;
+	// 初始化退化为假
 	int decayed = 0;
 
+	// 如果cfsrq刚刚被删除过调度单元
 	if (cfs_rq->removed.nr) {
 		unsigned long r;
+		// 定义除数为最大负载平均减去还未经历过的时间
 		u32 divider = LOAD_AVG_MAX - 1024 + sa->period_contrib;
 
+		// 对cfsrq的删除过的调度单元在锁保护下进行如下操作
 		raw_spin_lock(&cfs_rq->removed.lock);
+		// 将利用率平均、负载平均可运行和交换出来，并且将数量清0
 		swap(cfs_rq->removed.util_avg, removed_util);
 		swap(cfs_rq->removed.load_avg, removed_load);
 		swap(cfs_rq->removed.runnable_sum, removed_runnable_sum);
@@ -3821,28 +3832,37 @@ update_cfs_rq_load_avg(u64 now, struct cfs_rq *cfs_rq)
 		raw_spin_unlock(&cfs_rq->removed.lock);
 
 		r = removed_load;
+		// 将删除的负载平均和和减到cfsrq上
 		sub_positive(&sa->load_avg, r);
 		sub_positive(&sa->load_sum, r * divider);
 
 		r = removed_util;
+		// 将删除的利用率平均和和减到cfsrq上
 		sub_positive(&sa->util_avg, r);
 		sub_positive(&sa->util_sum, r * divider);
 
+		// 将删除的可运行和减到cfsrq的传播可运行和上
 		add_tg_cfs_propagate(cfs_rq, -(long)removed_runnable_sum);
 
+		// 将退化设置为真
 		decayed = 1;
 	}
 
+	// 更新cfsrq的负载平均，其返回是否退化，和当前的是否退化相或
 	decayed |= __update_load_avg_cfs_rq(now, cpu_of(rq_of(cfs_rq)), cfs_rq);
 
 #ifndef CONFIG_64BIT
 	smp_wmb();
+	// 更新负载最近更新时间拷贝
 	cfs_rq->load_last_update_time_copy = sa->last_update_time;
 #endif
 
+	// 如果退化过
 	if (decayed)
+	    // 更新cfsrq的利用率，即更新cpu频率
 		cfs_rq_util_change(cfs_rq);
 
+	// 返回是否退化过
 	return decayed;
 }
 
@@ -3854,8 +3874,11 @@ update_cfs_rq_load_avg(u64 now, struct cfs_rq *cfs_rq)
  * Must call update_cfs_rq_load_avg() before this, since we rely on
  * cfs_rq->avg.last_update_time being current.
  */
+// 将这个调度单元attach到cfsrq上
+// 看到这里
 static void attach_entity_load_avg(struct cfs_rq *cfs_rq, struct sched_entity *se)
 {
+    // 定义除数为cfsrq经历过的时间
 	u32 divider = LOAD_AVG_MAX - 1024 + cfs_rq->avg.period_contrib;
 
 	/*
@@ -3943,7 +3966,7 @@ static inline void update_load_avg(struct cfs_rq *cfs_rq, struct sched_entity *s
 	decayed |= propagate_entity_load_avg(se);
 
 	if (!se->avg.last_update_time && (flags & DO_ATTACH)) {
-
+	    //
 		attach_entity_load_avg(cfs_rq, se);
 		update_tg_load_avg(cfs_rq, 0);
 
