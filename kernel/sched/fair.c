@@ -829,38 +829,54 @@ static void update_tg_load_avg(struct cfs_rq *cfs_rq, int force)
 /*
  * Update the current task's runtime statistics.
  */
+// 跟更当前调度单元的运行时间统计
 static void update_curr(struct cfs_rq *cfs_rq)
 {
+    // 获得当前调度单元
 	struct sched_entity *curr = cfs_rq->curr;
+	// 获得cfsrq的当前时间
 	u64 now = rq_clock_task(rq_of(cfs_rq));
 	u64 delta_exec;
 
+	// 如果当前调度单元为空则返回
 	if (unlikely(!curr))
 		return;
 
+	// 当前时间减去执行开始时间获得执行时间delta
 	delta_exec = now - curr->exec_start;
+	// 如果执行时间delta小于0则返回
 	if (unlikely((s64)delta_exec <= 0))
 		return;
 
+	// 将现在设置为执行开始时间
 	curr->exec_start = now;
 
+	// 设置执行最大时间统计信息
 	schedstat_set(curr->statistics.exec_max,
 		      max(delta_exec, curr->statistics.exec_max));
 
+	// 将总执行时间加上delta
 	curr->sum_exec_runtime += delta_exec;
+	// 将执行时钟统计信息加上delta
 	schedstat_add(cfs_rq->exec_clock, delta_exec);
 
+	// 将虚拟运行时间加上运行时间对权重加权后的值
 	curr->vruntime += calc_delta_fair(delta_exec, curr);
+	// 更新最小虚拟运行时间的调度单元
 	update_min_vruntime(cfs_rq);
 
+	// 如果调度单元是任务
 	if (entity_is_task(curr)) {
+	    // 获得对应任务
 		struct task_struct *curtask = task_of(curr);
 
+		// 对任务的cgroup group和调度时间统计信息进行记账
 		trace_sched_stat_runtime(curtask, delta_exec, curr->vruntime);
 		cgroup_account_cputime(curtask, delta_exec);
 		account_group_exec_runtime(curtask, delta_exec);
 	}
 
+	// 对cfsrq的运行时间记账
 	account_cfs_rq_runtime(cfs_rq, delta_exec);
 }
 
@@ -2792,12 +2808,17 @@ static inline void
 dequeue_load_avg(struct cfs_rq *cfs_rq, struct sched_entity *se) { }
 #endif
 
+// 对调度单元重设权重
+// 看到这里
 static void reweight_entity(struct cfs_rq *cfs_rq, struct sched_entity *se,
 			    unsigned long weight, unsigned long runnable)
 {
+    // 如果调度单元在cfsrq上
 	if (se->on_rq) {
 		/* commit outstanding execution time */
+	    // 如果cfsrq的当前任务是当前调度单元
 		if (cfs_rq->curr == se)
+		    // 更新cfsrq的当前任务的运行时间
 			update_curr(cfs_rq);
 		account_entity_dequeue(cfs_rq, se);
 		dequeue_runnable_load_avg(cfs_rq, se);
@@ -2910,21 +2931,28 @@ void reweight_task(struct task_struct *p, int prio)
  *
  * hence icky!
  */
+// 计算cfsrq在tg中能分到的总权重，这是为了让tg的多个cfsrq平均的跑
 static long calc_group_shares(struct cfs_rq *cfs_rq)
 {
 	long tg_weight, tg_shares, load, shares;
+	// 获得cfsrq所属的tg
 	struct task_group *tg = cfs_rq->tg;
 
+	// 获得tg的总权重
 	tg_shares = READ_ONCE(tg->shares);
 
+	// 获得csfrq的负载
 	load = max(scale_load_down(cfs_rq->load.weight), cfs_rq->avg.load_avg);
 
+	// 获得tg的当前负载
 	tg_weight = atomic_long_read(&tg->load_avg);
 
 	/* Ensure tg_weight >= load */
+	// 将tg的当前负载减去cfsrq之前的贡献值加上cfsrq当前负载
 	tg_weight -= cfs_rq->tg_load_avg_contrib;
 	tg_weight += load;
 
+	// 将cfsrq分到的权重设置为tg总权重除以tg当前负载乘以cfsrq当前负载
 	shares = (tg_shares * load);
 	if (tg_weight)
 		shares /= tg_weight;
@@ -2941,6 +2969,7 @@ static long calc_group_shares(struct cfs_rq *cfs_rq)
 	 * case no task is runnable on a CPU MIN_SHARES=2 should be returned
 	 * instead of 0.
 	 */
+	// 将分到的权重做个限制
 	return clamp_t(long, shares, MIN_SHARES, tg_shares);
 }
 
@@ -2971,20 +3000,25 @@ static long calc_group_shares(struct cfs_rq *cfs_rq)
  * Where these max() serve both to use the 'instant' values to fix the slow
  * from-idle and avoid the /0 on to-idle, similar to (6).
  */
+// 计算cfsrq在tg中能分到的可运行权重
 static long calc_group_runnable(struct cfs_rq *cfs_rq, long shares)
 {
 	long runnable, load_avg;
 
+	// 获得cfsrq的总负载平均
 	load_avg = max(cfs_rq->avg.load_avg,
 		       scale_load_down(cfs_rq->load.weight));
 
+	// 获得cfsrq的可运行负载平均
 	runnable = max(cfs_rq->avg.runnable_load_avg,
 		       scale_load_down(cfs_rq->runnable_weight));
 
+	// 将cfs可运行负载平均除以cfs的总负载平均乘以总权重得到可运行权重
 	runnable *= shares;
 	if (load_avg)
 		runnable /= load_avg;
 
+	// 将可运行权重稍加限制后返回
 	return clamp_t(long, runnable, MIN_SHARES, shares);
 }
 # endif /* CONFIG_SMP */
@@ -2995,27 +3029,36 @@ static inline int throttled_hierarchy(struct cfs_rq *cfs_rq);
  * Recomputes the group entity based on the current state of its group
  * runqueue.
  */
+// 更新调度单元拥有的cfsrq
 static void update_cfs_group(struct sched_entity *se)
 {
+    // 获得调度单元拥有的组cfsrq
 	struct cfs_rq *gcfs_rq = group_cfs_rq(se);
 	long shares, runnable;
 
+	// 如果调度单元不拥有cfsrq则直接返回
 	if (!gcfs_rq)
 		return;
 
+	// 如果组cfsrq被限速则直接返回
 	if (throttled_hierarchy(gcfs_rq))
 		return;
 
 #ifndef CONFIG_SMP
+	// 对于非smp情况，将gcfsrq属于的任务组设定的总权重设置为可运行和总权重
 	runnable = shares = READ_ONCE(gcfs_rq->tg->shares);
 
+	// 如果当前调度单元的权重等于总权重则直接返回
 	if (likely(se->load.weight == shares))
 		return;
 #else
+	// 对于smp情况，分别计算总权重和可运行权重
+	// 对于weight是1算出的负载平均是负载和除以总时间最大为1024
 	shares   = calc_group_shares(gcfs_rq);
 	runnable = calc_group_runnable(gcfs_rq, shares);
 #endif
 
+	// 将计算出来的权重更新到调度单元和cfsrq上
 	reweight_entity(cfs_rq_of(se), se, shares, runnable);
 }
 
@@ -3875,7 +3918,6 @@ update_cfs_rq_load_avg(u64 now, struct cfs_rq *cfs_rq)
  * cfs_rq->avg.last_update_time being current.
  */
 // 将这个调度单元attach到cfsrq上
-// 看到这里
 static void attach_entity_load_avg(struct cfs_rq *cfs_rq, struct sched_entity *se)
 {
     // 定义除数为cfsrq经历过的时间
@@ -3888,6 +3930,7 @@ static void attach_entity_load_avg(struct cfs_rq *cfs_rq, struct sched_entity *s
 	 *
 	 * XXX illustrate
 	 */
+	// 设置调度单元的最近更新时间与周期贡献为cfsrq的
 	se->avg.last_update_time = cfs_rq->avg.last_update_time;
 	se->avg.period_contrib = cfs_rq->avg.period_contrib;
 
@@ -3897,22 +3940,30 @@ static void attach_entity_load_avg(struct cfs_rq *cfs_rq, struct sched_entity *s
 	 * entirely outside of the PELT hierarchy, nobody cares if we truncate
 	 * _sum a little.
 	 */
+	// 将调度单元的利用率平均乘以经历的时间重新计算其调度和
 	se->avg.util_sum = se->avg.util_avg * divider;
 
+	// 将调度单元的负载和设置为经历的时间
 	se->avg.load_sum = divider;
+	// 如果调度单元的权重不为0
 	if (se_weight(se)) {
+	    // 设置负载和为负载平均乘以负载和除以权重
 		se->avg.load_sum =
 			div_u64(se->avg.load_avg * se->avg.load_sum, se_weight(se));
 	}
 
+	// 将可运行负载和设置为负载和
 	se->avg.runnable_load_sum = se->avg.load_sum;
 
+	// 将调度单元的负载和负载平均利用率和利用率平均加到cfsrq上
 	enqueue_load_avg(cfs_rq, se);
 	cfs_rq->avg.util_avg += se->avg.util_avg;
 	cfs_rq->avg.util_sum += se->avg.util_sum;
 
+	// 添加任务组cfs传播，将调度单元的负载和传播上去
 	add_tg_cfs_propagate(cfs_rq, se->avg.load_sum);
 
+	// 改变cfsrq的利用率
 	cfs_rq_util_change(cfs_rq);
 }
 
@@ -3958,18 +4009,20 @@ static inline void update_load_avg(struct cfs_rq *cfs_rq, struct sched_entity *s
 	 * Track task load average for carrying it to new CPU after migrated, and
 	 * track group sched_entity load average for task_h_load calc in migration
 	 */
-    // 
+    // 如果调度单元的最近更新时间不为0并且不跳过年龄负载则更新调度单元的负载平均
 	if (se->avg.last_update_time && !(flags & SKIP_AGE_LOAD))
 		__update_load_avg_se(now, cpu, cfs_rq, se);
 
+	// 更新cfsrq的负载平均
 	decayed  = update_cfs_rq_load_avg(now, cfs_rq);
+	// 传播调度单元的负载平均
 	decayed |= propagate_entity_load_avg(se);
 
+	// 如果调度单元最近更新时间为0并且attach则attach调度单元的负载平均并且更新任务组的负载平均
 	if (!se->avg.last_update_time && (flags & DO_ATTACH)) {
-	    //
 		attach_entity_load_avg(cfs_rq, se);
 		update_tg_load_avg(cfs_rq, 0);
-
+	// 如果退化并且更新任务组则更新任务组的负载平均
 	} else if (decayed && (flags & UPDATE_TG))
 		update_tg_load_avg(cfs_rq, 0);
 }
@@ -4333,6 +4386,7 @@ dequeue_entity(struct cfs_rq *cfs_rq, struct sched_entity *se, int flags)
 /*
  * Preempt the current task with a newly woken task if needed:
  */
+// 检测tick是否需要抢占，如果是则标记抢占
 static void
 check_preempt_tick(struct cfs_rq *cfs_rq, struct sched_entity *curr)
 {
@@ -4504,7 +4558,7 @@ entity_tick(struct cfs_rq *cfs_rq, struct sched_entity *curr, int queued)
 	 */
     // 更新平均负载
 	update_load_avg(cfs_rq, curr, UPDATE_TG);
-    // 更新当前任务的cfs组
+    // 更新当前任务拥有的cfs组，刚刚更新的curr所属的cfs的负载平均，现在更新的是curr拥有的cfs
 	update_cfs_group(curr);
 
 #ifdef CONFIG_SCHED_HRTICK
