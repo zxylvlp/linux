@@ -1183,15 +1183,19 @@ static unsigned int task_scan_max(struct task_struct *p)
 	return max(smin, smax);
 }
 
+// 同下
 static void account_numa_enqueue(struct rq *rq, struct task_struct *p)
 {
 	rq->nr_numa_running += (p->numa_preferred_nid != -1);
 	rq->nr_preferred_running += (p->numa_preferred_nid == task_node(p));
 }
 
+// 记录numa出队
 static void account_numa_dequeue(struct rq *rq, struct task_struct *p)
 {
+    // 如果任务的更喜欢的numa节点不等于-1则将rq的运行的numa任务数减1
 	rq->nr_numa_running -= (p->numa_preferred_nid != -1);
+	// 如果任务的更喜欢的numa节点等于cpu的numa节点则将rq的numa上运行的喜欢的任务数减1
 	rq->nr_preferred_running -= (p->numa_preferred_nid == task_node(p));
 }
 
@@ -2635,6 +2639,7 @@ out:
 /*
  * Drive the periodic memory faults..
  */
+// 看到这里
 void task_tick_numa(struct rq *rq, struct task_struct *curr)
 {
 	struct callback_head *work = &curr->numa_work;
@@ -2682,6 +2687,7 @@ static inline void account_numa_dequeue(struct rq *rq, struct task_struct *p)
 
 #endif /* CONFIG_NUMA_BALANCING */
 
+// 同下不赘述
 static void
 account_entity_enqueue(struct cfs_rq *cfs_rq, struct sched_entity *se)
 {
@@ -2699,18 +2705,26 @@ account_entity_enqueue(struct cfs_rq *cfs_rq, struct sched_entity *se)
 	cfs_rq->nr_running++;
 }
 
+// 记录元素出队，参数是调度单元所属于的cfsrq和调度单元
 static void
 account_entity_dequeue(struct cfs_rq *cfs_rq, struct sched_entity *se)
 {
+    // 给cfsrq的负载权重减去调度单元的权重
 	update_load_sub(&cfs_rq->load, se->load.weight);
+	// 如果调度单元是顶层调度单元
 	if (!parent_entity(se))
+	    // 给cfsrq对应cpu的rq的负载权重减去调度单元的负载权重
 		update_load_sub(&rq_of(cfs_rq)->load, se->load.weight);
 #ifdef CONFIG_SMP
+	// 如果调度单元是任务
 	if (entity_is_task(se)) {
+	    // 记录在numa上出队
 		account_numa_dequeue(rq_of(cfs_rq), task_of(se));
+		// 将调度单元从rq的cfs任务链表中删掉
 		list_del_init(&se->group_node);
 	}
 #endif
+	// 将cfsrq的可运行数减1
 	cfs_rq->nr_running--;
 }
 
@@ -2755,16 +2769,19 @@ account_entity_dequeue(struct cfs_rq *cfs_rq, struct sched_entity *se)
 /*
  * XXX we want to get rid of these helpers and use the full load resolution.
  */
+// 同下
 static inline long se_weight(struct sched_entity *se)
 {
 	return scale_load_down(se->load.weight);
 }
 
+// 同下
 static inline long se_runnable(struct sched_entity *se)
 {
 	return scale_load_down(se->runnable_weight);
 }
 
+// 同下
 static inline void
 enqueue_runnable_load_avg(struct cfs_rq *cfs_rq, struct sched_entity *se)
 {
@@ -2774,6 +2791,7 @@ enqueue_runnable_load_avg(struct cfs_rq *cfs_rq, struct sched_entity *se)
 	cfs_rq->avg.runnable_load_sum += se_runnable(se) * se->avg.runnable_load_sum;
 }
 
+// 同下
 static inline void
 dequeue_runnable_load_avg(struct cfs_rq *cfs_rq, struct sched_entity *se)
 {
@@ -2784,6 +2802,7 @@ dequeue_runnable_load_avg(struct cfs_rq *cfs_rq, struct sched_entity *se)
 		     se_runnable(se) * se->avg.runnable_load_sum);
 }
 
+// 同下
 static inline void
 enqueue_load_avg(struct cfs_rq *cfs_rq, struct sched_entity *se)
 {
@@ -2791,6 +2810,7 @@ enqueue_load_avg(struct cfs_rq *cfs_rq, struct sched_entity *se)
 	cfs_rq->avg.load_sum += se_weight(se) * se->avg.load_sum;
 }
 
+// 朴素实现
 static inline void
 dequeue_load_avg(struct cfs_rq *cfs_rq, struct sched_entity *se)
 {
@@ -2809,7 +2829,6 @@ dequeue_load_avg(struct cfs_rq *cfs_rq, struct sched_entity *se) { }
 #endif
 
 // 对调度单元重设权重
-// 看到这里
 static void reweight_entity(struct cfs_rq *cfs_rq, struct sched_entity *se,
 			    unsigned long weight, unsigned long runnable)
 {
@@ -2820,27 +2839,38 @@ static void reweight_entity(struct cfs_rq *cfs_rq, struct sched_entity *se,
 		if (cfs_rq->curr == se)
 		    // 更新cfsrq的当前任务的运行时间
 			update_curr(cfs_rq);
+		// 将调度单元的权重从cfsrq中删掉
 		account_entity_dequeue(cfs_rq, se);
+		// 将调度单元的可运行权重可运行负载和与可运行负载平均从cfsrq中删掉
 		dequeue_runnable_load_avg(cfs_rq, se);
 	}
+	// 将调度单元的负载和与负载平均从cfsrq中删掉
 	dequeue_load_avg(cfs_rq, se);
 
+	// 给调度单元设置新的可运行权重和权重
 	se->runnable_weight = runnable;
 	update_load_set(&se->load, weight);
 
 #ifdef CONFIG_SMP
 	do {
+	    // 获得经历过的时间
 		u32 divider = LOAD_AVG_MAX - 1024 + se->avg.period_contrib;
 
+		// 将负载和乘以权重之后除以经历过的时间获得负载平均
 		se->avg.load_avg = div_u64(se_weight(se) * se->avg.load_sum, divider);
+		// 将可运行和乘以可运行权重之后除以经历过的时间获得可运行负载平均
 		se->avg.runnable_load_avg =
 			div_u64(se_runnable(se) * se->avg.runnable_load_sum, divider);
 	} while (0);
 #endif
 
+	// 将调度单元的负载和与负载平均加入cfsrq
 	enqueue_load_avg(cfs_rq, se);
+	// 如果调度单元在rq上
 	if (se->on_rq) {
+	    // 将调度单元的权重加入cfsrq中
 		account_entity_enqueue(cfs_rq, se);
+		// 将调度单元的可运行权重可运行负载和与可运行负载平均加入cfsrq中
 		enqueue_runnable_load_avg(cfs_rq, se);
 	}
 }
@@ -3029,7 +3059,7 @@ static inline int throttled_hierarchy(struct cfs_rq *cfs_rq);
  * Recomputes the group entity based on the current state of its group
  * runqueue.
  */
-// 更新调度单元拥有的cfsrq
+// 更新调度单元拥有的cfsrq，主要是更新权重
 static void update_cfs_group(struct sched_entity *se)
 {
     // 获得调度单元拥有的组cfsrq
@@ -4394,15 +4424,21 @@ check_preempt_tick(struct cfs_rq *cfs_rq, struct sched_entity *curr)
 	struct sched_entity *se;
 	s64 delta;
 
+	// 计算当前任务的理想运行时间
 	ideal_runtime = sched_slice(cfs_rq, curr);
+	// 计算执行时间为总执行时间减去上次总执行时间
 	delta_exec = curr->sum_exec_runtime - curr->prev_sum_exec_runtime;
+	// 如果执行时间大于理想运行时间
 	if (delta_exec > ideal_runtime) {
+	    // 重调度当前rq
 		resched_curr(rq_of(cfs_rq));
 		/*
 		 * The current task ran long enough, ensure it doesn't get
 		 * re-elected due to buddy favours.
 		 */
+		// 清除伙伴
 		clear_buddies(cfs_rq, curr);
+		// 返回
 		return;
 	}
 
@@ -4411,15 +4447,20 @@ check_preempt_tick(struct cfs_rq *cfs_rq, struct sched_entity *curr)
 	 * narrow margin doesn't have to wait for a full slice.
 	 * This also mitigates buddy induced latencies under load.
 	 */
+	// 如果执行时间小于最小执行时间则返回
 	if (delta_exec < sysctl_sched_min_granularity)
 		return;
 
+	// 选择cfsrq第一个元素
 	se = __pick_first_entity(cfs_rq);
+	// 如果获得当前任务和cfsrq第一个元素vruntime的差
 	delta = curr->vruntime - se->vruntime;
 
+	// 如果差小于0则返回
 	if (delta < 0)
 		return;
 
+	// 如果差大于任务的理想运行时间则重调度当前rq
 	if (delta > ideal_runtime)
 		resched_curr(rq_of(cfs_rq));
 }
@@ -4558,7 +4599,7 @@ entity_tick(struct cfs_rq *cfs_rq, struct sched_entity *curr, int queued)
 	 */
     // 更新平均负载
 	update_load_avg(cfs_rq, curr, UPDATE_TG);
-    // 更新当前任务拥有的cfs组，刚刚更新的curr所属的cfs的负载平均，现在更新的是curr拥有的cfs
+    // 更新当前调度单元所拥有的cfs组，刚刚更新的curr所属的cfs的负载平均，现在更新的是curr拥有的cfs
 	update_cfs_group(curr);
 
 #ifdef CONFIG_SCHED_HRTICK
