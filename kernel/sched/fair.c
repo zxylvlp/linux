@@ -2476,6 +2476,7 @@ void task_numa_fault(int last_cpupid, int mem_node, int pages, int flags)
 	p->numa_faults_locality[local] += pages;
 }
 
+// 看到这里
 static void reset_ptenuma_scan(struct task_struct *p)
 {
 	/*
@@ -2494,19 +2495,27 @@ static void reset_ptenuma_scan(struct task_struct *p)
  * The expensive part of numa migration is done from task_work context.
  * Triggered from task_tick_numa().
  */
+// 在task_work上下文中执行的numa迁移工作
 void task_numa_work(struct callback_head *work)
 {
+    // 获得当前时间
 	unsigned long migrate, next_scan, now = jiffies;
+	// 获得当前执行任务
 	struct task_struct *p = current;
+	// 获得当前任务的内存结构
 	struct mm_struct *mm = p->mm;
+	// 获得当前任务的总执行时间
 	u64 runtime = p->se.sum_exec_runtime;
 	struct vm_area_struct *vma;
 	unsigned long start, end;
+	// 初始化页表项更新次数为0
 	unsigned long nr_pte_updates = 0;
 	long pages, virtpages;
 
+	// 当前任务理应和work所属任务一致
 	SCHED_WARN_ON(p != container_of(work, struct task_struct, numa_work));
 
+	// 将当前work的下一个work设置为自己，防止多次添加
 	work->next = work; /* protect against double add */
 	/*
 	 * Who cares about NUMA placement when they're dying.
@@ -2516,9 +2525,11 @@ void task_numa_work(struct callback_head *work)
 	 * without p->mm even though we still had it when we enqueued this
 	 * work.
 	 */
+	// 如果任务正在退出则返回
 	if (p->flags & PF_EXITING)
 		return;
 
+	// 如果内存的numa下次扫描时间为空，则将其设置为当前时间加上numa平衡扫描延迟
 	if (!mm->numa_next_scan) {
 		mm->numa_next_scan = now +
 			msecs_to_jiffies(sysctl_numa_balancing_scan_delay);
@@ -2527,16 +2538,23 @@ void task_numa_work(struct callback_head *work)
 	/*
 	 * Enforce maximal scan/migration frequency..
 	 */
+	// 获得numa扫描目标时间
 	migrate = mm->numa_next_scan;
+	// 如果当前时间小于numa扫描目标时间则返回
 	if (time_before(now, migrate))
 		return;
 
+	// 如果numa扫描周期为0
 	if (p->numa_scan_period == 0) {
+	    // 设置numa扫描最大周期与周期
 		p->numa_scan_period_max = task_scan_max(p);
 		p->numa_scan_period = task_scan_start(p);
 	}
+	// 注意numa扫描周期是任务的，numa下次扫描时间是mm的
 
+	// 将当前时间加上numa扫描周期计算下次扫描时间
 	next_scan = now + msecs_to_jiffies(p->numa_scan_period);
+	// 设置下次扫描时间，如果设置出错则返回
 	if (cmpxchg(&mm->numa_next_scan, migrate, next_scan) != migrate)
 		return;
 
@@ -2544,27 +2562,38 @@ void task_numa_work(struct callback_head *work)
 	 * Delay this task enough that another task of this mm will likely win
 	 * the next time around.
 	 */
+	// 给任务的节点时间戳加两个tick时间
 	p->node_stamp += 2 * TICK_NSEC;
 
+	// 获得内存的numa扫描开始点
 	start = mm->numa_scan_offset;
+	// 获得numa平衡要扫描的页数
 	pages = sysctl_numa_balancing_scan_size;
 	pages <<= 20 - PAGE_SHIFT; /* MB in pages */
+	// 将页数乘以8的到虚拟页数
 	virtpages = pages * 8;	   /* Scan up to this much virtual space */
+	// 如果页数为0则返回
 	if (!pages)
 		return;
 
 
+	// 对内存map区域上读锁
 	if (!down_read_trylock(&mm->mmap_sem))
 		return;
+	// 获得开始点之后的第一个vma
 	vma = find_vma(mm, start);
+	// 如果找不到则重置扫描
 	if (!vma) {
 		reset_ptenuma_scan(p);
 		start = 0;
 		vma = mm->mmap;
 	}
+	// 只要vma不为空则遍历vma
 	for (; vma; vma = vma->vm_next) {
+	    // 如果vma不可迁移或者vma没有在fault时迁移的标志或者vma是大页或者vma是混合映射
 		if (!vma_migratable(vma) || !vma_policy_mof(vma) ||
 			is_vm_hugetlb_page(vma) || (vma->vm_flags & VM_MIXEDMAP)) {
+		    // 跳过当前vma
 			continue;
 		}
 
@@ -2574,6 +2603,7 @@ void task_numa_work(struct callback_head *work)
 		 * hinting faults in read-only file-backed mappings or the vdso
 		 * as migrating the pages will be of marginal benefit.
 		 */
+		// 如果vma不包含内存或者vma对应了只读文件则跳过
 		if (!vma->vm_mm ||
 		    (vma->vm_file && (vma->vm_flags & (VM_READ|VM_WRITE)) == (VM_READ)))
 			continue;
@@ -2582,13 +2612,19 @@ void task_numa_work(struct callback_head *work)
 		 * Skip inaccessible VMAs to avoid any confusion between
 		 * PROT_NONE and NUMA hinting ptes
 		 */
+		// 如果vma不能进行读写执行则跳过
 		if (!(vma->vm_flags & (VM_READ | VM_EXEC | VM_WRITE)))
 			continue;
 
+		// 只要结束位置没有到vma的结束位置则继续循环
 		do {
+		    // 将开始位置设置为开始位置和vma开始位置的最大值
 			start = max(start, vma->vm_start);
+			// 将结束位置设置为开始位置加指定页数内存并对齐到大页大小
 			end = ALIGN(start + (pages << PAGE_SHIFT), HPAGE_SIZE);
+			// 将结束位置设置为结束位置与vma结束位置的最小值
 			end = min(end, vma->vm_end);
+			// 改变vma指定位置的页表项权限，返回更新的页表项数量
 			nr_pte_updates = change_prot_numa(vma, start, end);
 
 			/*
@@ -2599,14 +2635,21 @@ void task_numa_work(struct callback_head *work)
 			 * PTEs, scan up to virtpages, to skip through those
 			 * areas faster.
 			 */
+			// 如果更新的页表项数量大于0
 			if (nr_pte_updates)
+			    // 将扫描过的页面数加上指定范围的页数
 				pages -= (end - start) >> PAGE_SHIFT;
+			// 将扫描过的虚拟页面数加上指定范围的页数
 			virtpages -= (end - start) >> PAGE_SHIFT;
 
+			// 将开始位置设置为当前的结束位置
 			start = end;
+			// 如果剩下的页面数或者虚拟页面数小于0
 			if (pages <= 0 || virtpages <= 0)
+			    // 则退出循环
 				goto out;
 
+			// 条件重调度
 			cond_resched();
 		} while (end != vma->vm_end);
 	}
@@ -2618,10 +2661,14 @@ out:
 	 * would find the !migratable VMA on the next scan but not reset the
 	 * scanner to the start so check it now.
 	 */
+    // 如果vma不为空
 	if (vma)
+	    // 将内存的numa扫描偏移量设置为开始位置
 		mm->numa_scan_offset = start;
 	else
+	    // 否则重置numa扫描位置
 		reset_ptenuma_scan(p);
+	// 释放mmap信号量的读锁
 	up_read(&mm->mmap_sem);
 
 	/*
@@ -2630,8 +2677,11 @@ out:
 	 * Usually update_task_scan_period slows down scanning enough; on an
 	 * overloaded system we need to limit overhead on a per task basis.
 	 */
+	// 如果任务的总运行时间不等于开始的时候的任务的总运行时间
 	if (unlikely(p->se.sum_exec_runtime != runtime)) {
+	    // 获得差值
 		u64 diff = p->se.sum_exec_runtime - runtime;
+		// 并且将节点时间戳加上32倍的差值
 		p->node_stamp += 32 * diff;
 	}
 }
@@ -2639,15 +2689,20 @@ out:
 /*
  * Drive the periodic memory faults..
  */
-// 看到这里
+// 添加tick numa的任务
 void task_tick_numa(struct rq *rq, struct task_struct *curr)
 {
+    // 获得当前任务
 	struct callback_head *work = &curr->numa_work;
 	u64 period, now;
 
 	/*
 	 * We don't care about NUMA placement if we don't have memory.
 	 */
+	// 如果当前任务的内存为空则直接返回
+	// 如果当前任务正在退出则直接返回
+	// 如果下一个任务不是当前任务则返回
+	// 使用下一个任务指针指向当前任务保证任务只执行一次
 	if (!curr->mm || (curr->flags & PF_EXITING) || work->next != work)
 		return;
 
@@ -2657,16 +2712,25 @@ void task_tick_numa(struct rq *rq, struct task_struct *curr)
 	 * task needs to have done some actual work before we bother with
 	 * NUMA placement.
 	 */
+	// 获得当前任务的调度单元的总执行时间
 	now = curr->se.sum_exec_runtime;
+	// 将当前任务的numa扫描周期换算成ns后作为周期
 	period = (u64)curr->numa_scan_period * NSEC_PER_MSEC;
 
+	// 如果当前时间大于当前任务的节点时间戳加上周期
 	if (now > curr->node_stamp + period) {
+	    // 如果当前任务的节点时间戳为0
 		if (!curr->node_stamp)
+		    // 设置当前任务的numa扫描周期为任务扫描的初始时间
 			curr->numa_scan_period = task_scan_start(curr);
+		// 将当前任务的节点时间戳加上周期
 		curr->node_stamp += period;
 
+		// 如果当前任务的内存的numa下次扫描时间在当前滴答之前
 		if (!time_before(jiffies, curr->mm->numa_next_scan)) {
+		    // 初始化任务的numa work
 			init_task_work(work, task_numa_work); /* TODO: move this into sched_fork() */
+			// 执行当前任务的numa work
 			task_work_add(curr, work, true);
 		}
 	}
