@@ -4389,6 +4389,7 @@ static void __clear_buddies_last(struct sched_entity *se)
 	}
 }
 
+// 同上
 static void __clear_buddies_next(struct sched_entity *se)
 {
 	for_each_sched_entity(se) {
@@ -4400,6 +4401,7 @@ static void __clear_buddies_next(struct sched_entity *se)
 	}
 }
 
+// 同上
 static void __clear_buddies_skip(struct sched_entity *se)
 {
 	for_each_sched_entity(se) {
@@ -4411,14 +4413,18 @@ static void __clear_buddies_skip(struct sched_entity *se)
 	}
 }
 
+// 清除cfsrq中是se的伙伴
 static void clear_buddies(struct cfs_rq *cfs_rq, struct sched_entity *se)
 {
+    // 如果cfsrq的最近伙伴是se则清除以se为最近伙伴的cfsrq
 	if (cfs_rq->last == se)
 		__clear_buddies_last(se);
 
+	// 同上
 	if (cfs_rq->next == se)
 		__clear_buddies_next(se);
 
+	// 同上
 	if (cfs_rq->skip == se)
 		__clear_buddies_skip(se);
 }
@@ -4571,9 +4577,11 @@ wakeup_preempt_entity(struct sched_entity *curr, struct sched_entity *se);
  * 3) pick the "last" process, for cache locality
  * 4) do not run the "skip" process, if something else is available
  */
+// 选择cfsrq的下一个调度单元，参数是指定的cfsrq和当前调度单元
 static struct sched_entity *
 pick_next_entity(struct cfs_rq *cfs_rq, struct sched_entity *curr)
 {
+    // 获得cfsrq最左边的调度单元
 	struct sched_entity *left = __pick_first_entity(cfs_rq);
 	struct sched_entity *se;
 
@@ -4581,44 +4589,60 @@ pick_next_entity(struct cfs_rq *cfs_rq, struct sched_entity *curr)
 	 * If curr is set we have to see if its left of the leftmost entity
 	 * still in the tree, provided there was anything in the tree at all.
 	 */
+	// 如果最左边的单元为空或者当前调度单元存在并且当前调度单元的虚拟运行时间小于最左边的单元
 	if (!left || (curr && entity_before(curr, left)))
+	    // 则将当前调度单元设置为最左边的调度单元
 		left = curr;
 
+	// 将最左边的调度单元设置为调度单元
 	se = left; /* ideally we run the leftmost entity */
 
 	/*
 	 * Avoid running the skip buddy, if running something else can
 	 * be done without getting too unfair.
 	 */
+	// 如果cfsrq要跳过的伙伴等于调度单元
 	if (cfs_rq->skip == se) {
 		struct sched_entity *second;
 
+		// 如果调度单元等于当前调度单元
 		if (se == curr) {
+		    // 将第二个调度单元设置为最左边的调度单元
 			second = __pick_first_entity(cfs_rq);
 		} else {
+		    // 否则将第二个调度单元设置为调度单元的下一个
 			second = __pick_next_entity(se);
+			// 如果下一个存在则选择下一个与当前调度单元虚拟运行时间较小的一个
 			if (!second || (curr && entity_before(curr, second)))
 				second = curr;
 		}
 
+		// 如果第二个调度单元存在并且没有比第一个差太多
 		if (second && wakeup_preempt_entity(second, left) < 1)
+		    // 将调度单元设置为第二个调度单元
 			se = second;
 	}
 
 	/*
 	 * Prefer last buddy, try to return the CPU to a preempted task.
 	 */
+	// 如果cfsrq存在上次伙伴并且上次伙伴没有比第一个差太多
 	if (cfs_rq->last && wakeup_preempt_entity(cfs_rq->last, left) < 1)
+	    // 设置调度单元为cfsrq的上次伙伴
 		se = cfs_rq->last;
 
 	/*
 	 * Someone really wants this to run. If it's not unfair, run it.
 	 */
+	// 如果cfsrq存在下一个伙伴并且下一个伙伴没有比第一个差太多
 	if (cfs_rq->next && wakeup_preempt_entity(cfs_rq->next, left) < 1)
+	    // 设置调度单元为cfsrq的下一个伙伴
 		se = cfs_rq->next;
 
+	// 清除伙伴标记
 	clear_buddies(cfs_rq, se);
 
+	// 返回调度单元
 	return se;
 }
 
@@ -5546,6 +5570,7 @@ static inline void hrtick_update(struct rq *rq)
  * increased. Here we update the fair scheduling stats and
  * then put the task into the rbtree:
  */
+// 公平的将任务入队，参数为要入队的rq，
 static void
 enqueue_task_fair(struct rq *rq, struct task_struct *p, int flags)
 {
@@ -6878,44 +6903,62 @@ wakeup_preempt_entity(struct sched_entity *curr, struct sched_entity *se)
 	return 0;
 }
 
+// 设置调度单元为调度单元所在cfsrq的最近伙伴
 static void set_last_buddy(struct sched_entity *se)
 {
+    // 如果调度单元是任务并且调度策略是idle则返回
 	if (entity_is_task(se) && unlikely(task_of(se)->policy == SCHED_IDLE))
 		return;
 
+	// 遍历调度单元的每一个层级
 	for_each_sched_entity(se) {
+	    // 如果调度单元不在rq上则返回
 		if (SCHED_WARN_ON(!se->on_rq))
 			return;
+		// 将调度单元所属cfsrq的最近运行的任务设置成调度单元
 		cfs_rq_of(se)->last = se;
 	}
 }
 
+// 设置调度单元为调度单元所在cfsrq的下一个伙伴
 static void set_next_buddy(struct sched_entity *se)
 {
+    // 如果调度单元是任务并且调度策略是idle则返回
 	if (entity_is_task(se) && unlikely(task_of(se)->policy == SCHED_IDLE))
 		return;
 
+	// 遍历调度单元的每一个层级
 	for_each_sched_entity(se) {
+	    // 如果调度单元不在rq上则返回
 		if (SCHED_WARN_ON(!se->on_rq))
 			return;
+		// 将调度单元所属cfsrq的下一个要运行的任务设置成调度单元
 		cfs_rq_of(se)->next = se;
 	}
 }
 
+// 设置调度单元为调度单元所在cfsrq的跳过伙伴
 static void set_skip_buddy(struct sched_entity *se)
 {
+    // 遍历调度单元的每一层
 	for_each_sched_entity(se)
+	    // 将调度单元的cfsrq的跳过伙伴设置为调度单元
 		cfs_rq_of(se)->skip = se;
 }
 
 /*
  * Preempt the current task with a newly woken task if needed:
  */
+// 检测是否需要用新唤醒的任务抢占当前任务，参数是指定的rq，新唤醒的任务，唤醒标识
 static void check_preempt_wakeup(struct rq *rq, struct task_struct *p, int wake_flags)
 {
+    // 获得当前rq的当前任务
 	struct task_struct *curr = rq->curr;
+	// 获得当前任务的调度单元和新唤醒任务的调度单元
 	struct sched_entity *se = &curr->se, *pse = &p->se;
+	// 获得当前任务的cfsrq
 	struct cfs_rq *cfs_rq = task_cfs_rq(curr);
+	// 如果当前任务的cfsrq的运行进程数大于调度延迟的进程数，则设置扩容为真
 	int scale = cfs_rq->nr_running >= sched_nr_latency;
 	int next_buddy_marked = 0;
 
@@ -8316,6 +8359,7 @@ static inline enum fbq_type fbq_classify_rq(struct rq *rq)
  * @env: The load balancing environment.
  * @sds: variable to hold the statistics for this sched_domain.
  */
+// 看到这里
 static inline void update_sd_lb_stats(struct lb_env *env, struct sd_lb_stats *sds)
 {
 	struct sched_domain *child = env->sd->child;
@@ -8595,26 +8639,35 @@ static inline void calculate_imbalance(struct lb_env *env, struct sd_lb_stats *s
  *
  * Return:	- The busiest group if imbalance exists.
  */
+// 看到这里
+// 找到最繁忙的组，参数是负载均衡环境
+// 疑问：调度组和调度域的区别是什么？
 static struct sched_group *find_busiest_group(struct lb_env *env)
 {
 	struct sg_lb_stats *local, *busiest;
 	struct sd_lb_stats sds;
 
+	// 初始化调度域负载均衡统计
 	init_sd_lb_stats(&sds);
 
 	/*
 	 * Compute the various statistics relavent for load balancing at
 	 * this level.
 	 */
+	// 更新调度域负载均衡统计
 	update_sd_lb_stats(env, &sds);
+	// 获得调度域局部组和最繁忙组的统计信息
 	local = &sds.local_stat;
 	busiest = &sds.busiest_stat;
 
 	/* ASYM feature bypasses nice load balance check */
+	// 如果这个调度域拥有asym的标记，则直接返回调度域最忙的调度组
 	if (check_asym_packing(env, &sds))
 		return sds.busiest;
 
 	/* There is no busy sibling group to pull tasks from */
+	// 如果
+	// 看到这里
 	if (!sds.busiest || busiest->sum_nr_running == 0)
 		goto out_balanced;
 
@@ -8796,41 +8849,56 @@ static int need_active_balance(struct lb_env *env)
 
 static int active_load_balance_cpu_stop(void *data);
 
+// 根据负载均衡环境判断是否应该负载均衡
 static int should_we_balance(struct lb_env *env)
 {
+    // 获得环境的调度域的调度组
 	struct sched_group *sg = env->sd->groups;
+	// 将均衡cpu设置为-1
 	int cpu, balance_cpu = -1;
 
 	/*
 	 * Ensure the balancing environment is consistent; can happen
 	 * when the softirq triggers 'during' hotplug.
 	 */
+	// 测试目标cpu是否在允许均衡的cpu集合中
 	if (!cpumask_test_cpu(env->dst_cpu, env->cpus))
+	    // 如果不是则返回不应该均衡
 		return 0;
 
 	/*
 	 * In the newly idle case, we will allow all the cpu's
 	 * to do the newly idle load balance.
 	 */
+	// 如果空闲状态是新空闲状态
 	if (env->idle == CPU_NEWLY_IDLE)
+	    // 无条件返回应该均衡
 		return 1;
 
 	/* Try to find first idle cpu */
+	// 遍历cpu掩码集合与调度组均衡掩码集合中的每一个cpu
 	for_each_cpu_and(cpu, group_balance_mask(sg), env->cpus) {
+	    // 如果当前cpu不处于idle状态
 		if (!idle_cpu(cpu))
+		    // 继续循环
 			continue;
 
+		// 将cpu设置为要平衡的cpu
 		balance_cpu = cpu;
+		// 找到空闲的cpu了，可以跳出循环
 		break;
 	}
 
+	// 如果没要到要平衡的cpu
 	if (balance_cpu == -1)
+	    // 将平衡cpu设置为调度组均衡掩码中的第一个cpu
 		balance_cpu = group_balance_cpu(sg);
 
 	/*
 	 * First idle cpu or the first cpu(busiest) in this sched group
 	 * is eligible for doing load balancing at this and above domains.
 	 */
+	// 返回平衡cpu是否等于目标cpu
 	return balance_cpu == env->dst_cpu;
 }
 
@@ -8838,17 +8906,23 @@ static int should_we_balance(struct lb_env *env)
  * Check this_cpu to ensure it is balanced within domain. Attempt to move
  * tasks if there is an imbalance.
  */
+// 看到这里
+// 负载均衡，参数是当前cpu，当前cpu的rq，当前cpu调度域，当前cpu是否idle，传出参数是否继续balance
 static int load_balance(int this_cpu, struct rq *this_rq,
 			struct sched_domain *sd, enum cpu_idle_type idle,
 			int *continue_balancing)
 {
+    // 定义活跃均衡为0
 	int ld_moved, cur_ld_moved, active_balance = 0;
+	// 获得当前cpu调度域的父级调度域
 	struct sched_domain *sd_parent = sd->parent;
 	struct sched_group *group;
 	struct rq *busiest;
 	struct rq_flags rf;
+	// 获得cpu负载均衡掩码指针
 	struct cpumask *cpus = this_cpu_cpumask_var_ptr(load_balance_mask);
 
+	// 定义负载均衡环境
 	struct lb_env env = {
 		.sd		= sd,
 		.dst_cpu	= this_cpu,
@@ -8861,16 +8935,22 @@ static int load_balance(int this_cpu, struct rq *this_rq,
 		.tasks		= LIST_HEAD_INIT(env.tasks),
 	};
 
+	// 将可以负载均衡的cpu掩码置为当前调度域活跃cpu
 	cpumask_and(cpus, sched_domain_span(sd), cpu_active_mask);
 
+	// 将调度域指定空闲等级的负载平均次数加1
 	schedstat_inc(sd->lb_count[idle]);
 
 redo:
+    // 如果负载均衡环境说明我们不应该平衡
 	if (!should_we_balance(&env)) {
+	    // 将继续均衡设置为假
 		*continue_balancing = 0;
+		// 退出均衡
 		goto out_balanced;
 	}
 
+	// 找到最繁忙的组
 	group = find_busiest_group(&env);
 	if (!group) {
 		schedstat_inc(sd->lb_nobusyg[idle]);
