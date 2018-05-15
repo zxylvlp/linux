@@ -8360,8 +8360,10 @@ static inline enum fbq_type fbq_classify_rq(struct rq *rq)
  * @sds: variable to hold the statistics for this sched_domain.
  */
 // 看到这里
+// 更新调度域的负载均衡统计信息，参数是环境和调度域统计信息
 static inline void update_sd_lb_stats(struct lb_env *env, struct sd_lb_stats *sds)
 {
+    // 环境
 	struct sched_domain *child = env->sd->child;
 	struct sched_group *sg = env->sd->groups;
 	struct sg_lb_stats *local = &sds->local_stat;
@@ -8558,6 +8560,7 @@ void fix_small_imbalance(struct lb_env *env, struct sd_lb_stats *sds)
  * @env: load balance environment
  * @sds: statistics of the sched_domain whose imbalance is to be calculated.
  */
+// 看到这里
 static inline void calculate_imbalance(struct lb_env *env, struct sd_lb_stats *sds)
 {
 	unsigned long max_pull, load_above_capacity = ~0UL;
@@ -8639,7 +8642,6 @@ static inline void calculate_imbalance(struct lb_env *env, struct sd_lb_stats *s
  *
  * Return:	- The busiest group if imbalance exists.
  */
-// 看到这里
 // 找到最繁忙的组，参数是负载均衡环境
 // 疑问：调度组和调度域的区别是什么？
 static struct sched_group *find_busiest_group(struct lb_env *env)
@@ -8666,12 +8668,12 @@ static struct sched_group *find_busiest_group(struct lb_env *env)
 		return sds.busiest;
 
 	/* There is no busy sibling group to pull tasks from */
-	// 如果
-	// 看到这里
+	// 如果调度域没有最繁忙的调度组或者最繁忙的调度组可运行数量为0，则退出均衡
 	if (!sds.busiest || busiest->sum_nr_running == 0)
 		goto out_balanced;
 
 	/* XXX broken for overlapping NUMA groups */
+	// 将调度域的总负载除以总容量获得其平均负载
 	sds.avg_load = (SCHED_CAPACITY_SCALE * sds.total_load)
 						/ sds.total_capacity;
 
@@ -8680,6 +8682,7 @@ static struct sched_group *find_busiest_group(struct lb_env *env)
 	 * work because they assume all things are equal, which typically
 	 * isn't true due to cpus_allowed constraints and the like.
 	 */
+	// 如果最繁忙的调度组的组类型是非平衡类型，则进行强制均衡
 	if (busiest->group_type == group_imbalanced)
 		goto force_balance;
 
@@ -8687,6 +8690,7 @@ static struct sched_group *find_busiest_group(struct lb_env *env)
 	 * When dst_cpu is idle, prevent SMP nice and/or asymmetric group
 	 * capacities from resulting in underutilization due to avg_load.
 	 */
+	// 如果环境的空闲类型为不空闲，并且当前组有容量并且最繁忙的组没有容量，则进行强制均衡
 	if (env->idle != CPU_NOT_IDLE && group_has_capacity(env, local) &&
 	    busiest->group_no_capacity)
 		goto force_balance;
@@ -8695,6 +8699,7 @@ static struct sched_group *find_busiest_group(struct lb_env *env)
 	 * If the local group is busier than the selected busiest group
 	 * don't try and pull any tasks.
 	 */
+	// 如果局部平均负载大于最繁忙的平均负责，则不进行均衡
 	if (local->avg_load >= busiest->avg_load)
 		goto out_balanced;
 
@@ -8702,9 +8707,11 @@ static struct sched_group *find_busiest_group(struct lb_env *env)
 	 * Don't pull any tasks if this group is already above the domain
 	 * average load.
 	 */
+	// 如果局部平均负载大于调度域平均负载，则不进行均衡
 	if (local->avg_load >= sds.avg_load)
 		goto out_balanced;
 
+	// 如果cpu处于idle状态
 	if (env->idle == CPU_IDLE) {
 		/*
 		 * This cpu is idle. If the busiest group is not overloaded
@@ -8713,6 +8720,7 @@ static struct sched_group *find_busiest_group(struct lb_env *env)
 		 * significant if the diff is greater than 1 otherwise we
 		 * might end up to just move the imbalance on another group
 		 */
+	    // 如果最忙的调度组没有过载并且局部空闲cpu小于最忙的调度组加1则不进行均衡
 		if ((busiest->group_type != group_overloaded) &&
 				(local->idle_cpus <= (busiest->idle_cpus + 1)))
 			goto out_balanced;
@@ -8721,6 +8729,7 @@ static struct sched_group *find_busiest_group(struct lb_env *env)
 		 * In the CPU_NEWLY_IDLE, CPU_NOT_IDLE cases, use
 		 * imbalance_pct to be conservative.
 		 */
+	    // 如果最忙的调度组的平均负载小于局部组平均负载乘以调度域不平衡比例则不进行均衡
 		if (100 * busiest->avg_load <=
 				env->sd->imbalance_pct * local->avg_load)
 			goto out_balanced;
@@ -8728,10 +8737,13 @@ static struct sched_group *find_busiest_group(struct lb_env *env)
 
 force_balance:
 	/* Looks like there is an imbalance. Compute it */
+    // 计算不均衡
 	calculate_imbalance(env, &sds);
+	// 返回最忙的调度组
 	return sds.busiest;
 
 out_balanced:
+    // 将环境的不均衡设置为假并返回空
 	env->imbalance = 0;
 	return NULL;
 }
