@@ -445,6 +445,8 @@ struct cfs_bandwidth { };
 struct cfs_rq {
 	struct load_weight load;
 	unsigned long runnable_weight;
+	// nr_running表示当前cfsrq中运行的数量
+	// h_nr_running表示当前cfsrq中有多少任务
 	unsigned int nr_running, h_nr_running;
 
 	u64 exec_clock;

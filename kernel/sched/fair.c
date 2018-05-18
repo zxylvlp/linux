@@ -7037,6 +7037,7 @@ preempt:
 		set_last_buddy(se);
 }
 
+// 选择下一个任务
 static struct task_struct *
 pick_next_task_fair(struct rq *rq, struct task_struct *prev, struct rq_flags *rf)
 {
@@ -8203,6 +8204,9 @@ group_type group_classify(struct sched_group *group,
  * @sgs: variable to hold the statistics for this group.
  * @overload: Indicate more than one runnable task for any CPU.
  */
+// 更新调度组的负载均衡统计信息，参数env是负载均衡环境，参数调度组是要更新统计信息的调度组，
+// 参数负载索引是负载对应的索引，参数局部组表示当前调度组是否是局部组，
+// 参数调度组统计信息和是否过载是传出参数
 static inline void update_sg_lb_stats(struct lb_env *env,
 			struct sched_group *group, int load_idx,
 			int local_group, struct sg_lb_stats *sgs,
@@ -8211,47 +8215,69 @@ static inline void update_sg_lb_stats(struct lb_env *env,
 	unsigned long load;
 	int i, nr_running;
 
+	// 清空调度组统计信息
 	memset(sgs, 0, sizeof(*sgs));
 
+	// 对负载环境中调度组中的每一个CPU进行遍历
 	for_each_cpu_and(i, sched_group_span(group), env->cpus) {
+	    // 获得当前cpu的运行队列
 		struct rq *rq = cpu_rq(i);
 
 		/* Bias balancing toward cpus of our domain */
+		// 如果当前调度组是局部组
 		if (local_group)
+		    // 设置负载为目标负载
 			load = target_load(i, load_idx);
 		else
+		    // 设置负载为源头负载
 			load = source_load(i, load_idx);
 
+		// 调度组统计信息中的组负载加上负载
 		sgs->group_load += load;
+		// 调度组统计信息中的组利用率加上当前cpu利用率
 		sgs->group_util += cpu_util(i);
+		// 调度组统计信息中的总运行数加上rq的cfsrq的任务数
 		sgs->sum_nr_running += rq->cfs.h_nr_running;
 
+		// 获得rq正在运行的任务数
 		nr_running = rq->nr_running;
+		// 如果任务数大于1
 		if (nr_running > 1)
+		    // 将过载设置为真
 			*overload = true;
 
 #ifdef CONFIG_NUMA_BALANCING
+		// 将调度组统计信息中的指定numa运行数与指定本numa运行数加上rq中的值
 		sgs->nr_numa_running += rq->nr_numa_running;
 		sgs->nr_preferred_running += rq->nr_preferred_running;
 #endif
+		// 将调度组统计信息中的权重负载和加上rq的加权cpu负载
 		sgs->sum_weighted_load += weighted_cpuload(rq);
 		/*
 		 * No need to call idle_cpu() if nr_running is not 0
 		 */
+		// 如果正在运行的任务数为0并且当前cpu空闲，则将空闲cpu数加1
 		if (!nr_running && idle_cpu(i))
 			sgs->idle_cpus++;
 	}
 
 	/* Adjust by relative CPU capacity of the group */
+	// 获得调度组容量作为调度组统计信息
 	sgs->group_capacity = group->sgc->capacity;
+	// 调度组统计信息的平均负载设置为调度组负载除以调度组容量
 	sgs->avg_load = (sgs->group_load*SCHED_CAPACITY_SCALE) / sgs->group_capacity;
 
+	// 如果总运行数大于0
 	if (sgs->sum_nr_running)
+	    // 将每个任务的的负载设置为总加权负载除以总任务数
 		sgs->load_per_task = sgs->sum_weighted_load / sgs->sum_nr_running;
 
+	// 设置组权重
 	sgs->group_weight = group->group_weight;
 
+	// 根据组是否过载设置组没有容量
 	sgs->group_no_capacity = group_is_overloaded(env, sgs);
+	// 设置组类型
 	sgs->group_type = group_classify(group, sgs);
 }
 
@@ -8327,6 +8353,8 @@ asym_packing:
 #ifdef CONFIG_NUMA_BALANCING
 static inline enum fbq_type fbq_classify_group(struct sg_lb_stats *sgs)
 {
+    // nr_numa_running 表示指定了numa的任务
+    // > nr_preferred_running 表示在当前numa上跑的任务
 	if (sgs->sum_nr_running > sgs->nr_numa_running)
 		return regular;
 	if (sgs->sum_nr_running > sgs->nr_preferred_running)
@@ -8359,40 +8387,55 @@ static inline enum fbq_type fbq_classify_rq(struct rq *rq)
  * @env: The load balancing environment.
  * @sds: variable to hold the statistics for this sched_domain.
  */
-// 看到这里
 // 更新调度域的负载均衡统计信息，参数是环境和调度域统计信息
 static inline void update_sd_lb_stats(struct lb_env *env, struct sd_lb_stats *sds)
 {
-    // 环境
+    // 获得环境的调度域的子调度域
 	struct sched_domain *child = env->sd->child;
+	// 获得环境的调度域的调度组们
 	struct sched_group *sg = env->sd->groups;
+	// 获得调度域统计的局部统计
 	struct sg_lb_stats *local = &sds->local_stat;
 	struct sg_lb_stats tmp_sgs;
+	// 定义更好的兄弟为0
 	int load_idx, prefer_sibling = 0;
+	// 定义过载为假
 	bool overload = false;
 
+	// 如果子调度域存在并且其拥有更好的兄弟标记
 	if (child && child->flags & SD_PREFER_SIBLING)
+	    // 将更好的兄弟设置为真
 		prefer_sibling = 1;
 
+	// 获得调度域负载索引
 	load_idx = get_sd_load_idx(env->sd, env->idle);
 
 	do {
+	    // 获得临时调度组统计
 		struct sg_lb_stats *sgs = &tmp_sgs;
 		int local_group;
 
+		// 测试目标cpu是否在调度组中，如果是则将局部组设置为真
 		local_group = cpumask_test_cpu(env->dst_cpu, sched_group_span(sg));
+		// 如果局部组为真
 		if (local_group) {
+		    // 则将调度域统计中的局部组设置为当前调度组
 			sds->local = sg;
+			// 将调度组统计设置为局部统计
 			sgs = local;
 
+			// 如果环境的空闲类型不是新空闲或者调度组容量足够久没有更新
 			if (env->idle != CPU_NEWLY_IDLE ||
 			    time_after_eq(jiffies, sg->sgc->next_update))
+			    // 更新组容量
 				update_group_capacity(env->sd, env->dst_cpu);
 		}
 
+		// 更新调度组负载均衡统计信息
 		update_sg_lb_stats(env, sg, load_idx, local_group, sgs,
 						&overload);
 
+		// 如果是局部组则直接继续循环下一个组
 		if (local_group)
 			goto next_group;
 
@@ -8406,32 +8449,46 @@ static inline void update_sd_lb_stats(struct lb_env *env, struct sd_lb_stats *sd
 		 * under-utilized (possible with a large weight task outweighs
 		 * the tasks on the system).
 		 */
+		// 如果更喜欢兄弟并且调度域拥有局部组并且局部组有容量
+		// 并且当前组的运行任务数大于局部组任务数加1
 		if (prefer_sibling && sds->local &&
 		    group_has_capacity(env, local) &&
 		    (sgs->sum_nr_running > local->sum_nr_running + 1)) {
+		    // 将当前组设置为没有容量
 			sgs->group_no_capacity = 1;
+			// 更新当前组的组类型
 			sgs->group_type = group_classify(sg, sgs);
 		}
 
+		// 尝试更新调度域的最忙调度组
 		if (update_sd_pick_busiest(env, sds, sg, sgs)) {
+		    // 设置最忙组为当前组
 			sds->busiest = sg;
+			// 设置最忙组统计信息为当前组统计信息
 			sds->busiest_stat = *sgs;
 		}
 
 next_group:
 		/* Now, start updating sd_lb_stats */
+        // 将调度域统计信息的总运行数、负载、容量加上调度组的部分
 		sds->total_running += sgs->sum_nr_running;
 		sds->total_load += sgs->group_load;
 		sds->total_capacity += sgs->group_capacity;
 
+		// 继续看下一个调度组
 		sg = sg->next;
+	// 直到调度组与调度域的第一个调度组一致
 	} while (sg != env->sd->groups);
 
+	// 如果环境的调度域有numa选项
 	if (env->sd->flags & SD_NUMA)
+	    // 根据调度域最忙组统计获得环境的fbq类型
 		env->fbq_type = fbq_classify_group(&sds->busiest_stat);
 
+	// 如果环境的调度域的父调度域不存在
 	if (!env->sd->parent) {
 		/* update overload indicator if we are at root domain */
+	    // 设置环境的目标队列的根域过载与否
 		if (env->dst_rq->rd->overload != overload)
 			env->dst_rq->rd->overload = overload;
 	}
@@ -8491,29 +8548,42 @@ static int check_asym_packing(struct lb_env *env, struct sd_lb_stats *sds)
  * @env: The load balancing environment.
  * @sds: Statistics of the sched_domain whose imbalance is to be calculated.
  */
+// 修正小的不均衡 参数env表示负载均衡环境，sds表示调度域统计信息
 static inline
 void fix_small_imbalance(struct lb_env *env, struct sd_lb_stats *sds)
 {
+    // 初始化当前容量和移动容量为0
 	unsigned long tmp, capa_now = 0, capa_move = 0;
+	// 初始化不平衡数量为2
 	unsigned int imbn = 2;
 	unsigned long scaled_busy_load_per_task;
 	struct sg_lb_stats *local, *busiest;
 
+	// 获得调度域的局部组统计
 	local = &sds->local_stat;
+	// 获得调度域的最忙组统计
 	busiest = &sds->busiest_stat;
 
+	// 如果局部组的正在运行数和为0
 	if (!local->sum_nr_running)
+	    // 将局部组每个任务负载设置为环境的目标cpu的每个任务平均负载
 		local->load_per_task = cpu_avg_load_per_task(env->dst_cpu);
+	// 如果最忙组的每个任务负载大于局部组的每个任务负载
 	else if (busiest->load_per_task > local->load_per_task)
+	    // 将不平衡数量设置为1
 		imbn = 1;
 
+	// 设置每个任务繁忙负载为最忙组的每个任务负载乘以容量比例除以最忙组的组容量
 	scaled_busy_load_per_task =
 		(busiest->load_per_task * SCHED_CAPACITY_SCALE) /
 		busiest->group_capacity;
 
+	// 如果最忙组的平均负载加每个任务繁忙负载大于等于局部组的平均负载加每个任务繁忙负载乘以不平衡数
 	if (busiest->avg_load + scaled_busy_load_per_task >=
 	    local->avg_load + (scaled_busy_load_per_task * imbn)) {
+	    // 将环境的不平衡设置为最忙组的每个任务负载
 		env->imbalance = busiest->load_per_task;
+		// 返回
 		return;
 	}
 
@@ -8523,13 +8593,17 @@ void fix_small_imbalance(struct lb_env *env, struct sd_lb_stats *sds)
 	 * moving them.
 	 */
 
+	// 将当前容量加上最忙组的组容量乘以最忙组平均负载和每个任务负载的最小值
 	capa_now += busiest->group_capacity *
 			min(busiest->load_per_task, busiest->avg_load);
+	// 将当前容量加上局部组的组容量乘以局部组平均负载和每个任务负载的最小值
 	capa_now += local->group_capacity *
 			min(local->load_per_task, local->avg_load);
+	// 将当前容量归一化
 	capa_now /= SCHED_CAPACITY_SCALE;
 
 	/* Amount of load we'd subtract */
+	//
 	if (busiest->avg_load > scaled_busy_load_per_task) {
 		capa_move += busiest->group_capacity *
 			    min(busiest->load_per_task,
@@ -8561,19 +8635,24 @@ void fix_small_imbalance(struct lb_env *env, struct sd_lb_stats *sds)
  * @sds: statistics of the sched_domain whose imbalance is to be calculated.
  */
 // 看到这里
+// 计算不平衡，参数env是计算负载均衡的环境，参数sds是调度域的负载均衡统计信息
 static inline void calculate_imbalance(struct lb_env *env, struct sd_lb_stats *sds)
 {
+    // 初始化超过负载的容量
 	unsigned long max_pull, load_above_capacity = ~0UL;
 	struct sg_lb_stats *local, *busiest;
 
+	// 设置局部和最忙调度组统计信息为调度域的对应统计信息
 	local = &sds->local_stat;
 	busiest = &sds->busiest_stat;
 
+	// 如果最忙组的组类型为非平衡
 	if (busiest->group_type == group_imbalanced) {
 		/*
 		 * In the group_imb case we cannot rely on group-wide averages
 		 * to ensure cpu-load equilibrium, look at wider averages. XXX
 		 */
+	    // 设置最忙组的每个任务负载为当前每个任务负载与调度域平均负载的最小值
 		busiest->load_per_task =
 			min(busiest->load_per_task, sds->avg_load);
 	}
@@ -8584,9 +8663,12 @@ static inline void calculate_imbalance(struct lb_env *env, struct sd_lb_stats *s
 	 * factors in sg capacity and sgs with smaller group_type are
 	 * skipped when updating the busiest sg:
 	 */
+	// 如果最忙组的平均负载小于等于调度域的平均负载或者局部组的平均负载大于等于调度域的平均负载
 	if (busiest->avg_load <= sds->avg_load ||
 	    local->avg_load >= sds->avg_load) {
+	    // 将环境的均衡标记设置为假
 		env->imbalance = 0;
+		// 修正小不均衡并返回
 		return fix_small_imbalance(env, sds);
 	}
 
