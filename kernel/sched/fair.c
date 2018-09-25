@@ -6708,23 +6708,34 @@ static int wake_cap(struct task_struct *p, int cpu, int prev_cpu)
  *
  * preempt must be disabled.
  */
+// 公平的选择任务的rq
 static int
 select_task_rq_fair(struct task_struct *p, int prev_cpu, int sd_flag, int wake_flags)
 {
 	struct sched_domain *tmp, *affine_sd = NULL, *sd = NULL;
+	// 获得当前cpu
 	int cpu = smp_processor_id();
+	// 将新cpu设置为上一个cpu
 	int new_cpu = prev_cpu;
+	// 将想要亲和设置为0
 	int want_affine = 0;
+	// 判断唤醒是否需要同步
 	int sync = wake_flags & WF_SYNC;
 
+	// 判断调度域标记是否为在唤醒时balance
 	if (sd_flag & SD_BALANCE_WAKE) {
+	    // 记录被唤醒
 		record_wakee(p);
+		// 将想要亲和设置为非wide cap唤醒并且当前cpu在任务的允许cpu中
 		want_affine = !wake_wide(p) && !wake_cap(p, cpu, prev_cpu)
 			      && cpumask_test_cpu(cpu, &p->cpus_allowed);
 	}
 
+	// 加rcu读锁
 	rcu_read_lock();
+	// 对当前cpu的属于的每一个调度域进行遍历
 	for_each_domain(cpu, tmp) {
+	    // 如果调度域不进行负载均衡则跳出遍历
 		if (!(tmp->flags & SD_LOAD_BALANCE))
 			break;
 
@@ -6732,18 +6743,24 @@ select_task_rq_fair(struct task_struct *p, int prev_cpu, int sd_flag, int wake_f
 		 * If both cpu and prev_cpu are part of this domain,
 		 * cpu is a valid SD_WAKE_AFFINE target.
 		 */
+		// 如果想要亲和并且调度域有唤醒亲和标记并且调度域里面有前一个cpu
 		if (want_affine && (tmp->flags & SD_WAKE_AFFINE) &&
 		    cpumask_test_cpu(prev_cpu, sched_domain_span(tmp))) {
+		    // 则将调度域置为亲和调度域，跳出循环
 			affine_sd = tmp;
 			break;
 		}
 
+		// 如果调度域标记与调度域标记有交集
 		if (tmp->flags & sd_flag)
+		    // 则将调度域设置为当前调度域
 			sd = tmp;
+		// 如果不想亲和则跳出循环
 		else if (!want_affine)
 			break;
 	}
 
+	// 如果
 	if (affine_sd) {
 		sd = NULL; /* Prefer wake_affine over balance flags */
 		if (cpu == prev_cpu)
@@ -7041,17 +7058,22 @@ preempt:
 static struct task_struct *
 pick_next_task_fair(struct rq *rq, struct task_struct *prev, struct rq_flags *rf)
 {
+    // 获得rq的cfsrq
 	struct cfs_rq *cfs_rq = &rq->cfs;
 	struct sched_entity *se;
 	struct task_struct *p;
 	int new_tasks;
 
 again:
+    // 如果没有任务可运行则进行idle
 	if (!cfs_rq->nr_running)
 		goto idle;
 
+// 配置了公平组调度之后
 #ifdef CONFIG_FAIR_GROUP_SCHED
+	// 之前任务的调度类型不是公平调度
 	if (prev->sched_class != &fair_sched_class)
+	    // 直接进入简单分支
 		goto simple;
 
 	/*
@@ -7063,6 +7085,7 @@ again:
 	 */
 
 	do {
+	    // 获得当前调度元素
 		struct sched_entity *curr = cfs_rq->curr;
 
 		/*
@@ -7071,10 +7094,14 @@ again:
 		 * entity, update_curr() will update its vruntime, otherwise
 		 * forget we've ever seen it.
 		 */
+		// 如果当前调度元素存在
 		if (curr) {
+		    // 如果当前调度元素在rq上
 			if (curr->on_rq)
+			    // 更新当前调度单元运行时间统计
 				update_curr(cfs_rq);
 			else
+			    // 将当前调度当前设置为空
 				curr = NULL;
 
 			/*
@@ -7083,20 +7110,27 @@ again:
 			 * Therefore the nr_running test will indeed
 			 * be correct.
 			 */
+			// 检测cfsrq是否没有运行时间
 			if (unlikely(check_cfs_rq_runtime(cfs_rq))) {
+			    // 重新获得cfsrq
 				cfs_rq = &rq->cfs;
 
+				// 如果cfsrq没有可运行的任务则进入idle
 				if (!cfs_rq->nr_running)
 					goto idle;
 
+				// 否则进入simple
 				goto simple;
 			}
 		}
 
+		// 选择cfsrq下一个调度单元，这个是在一个cfsrq里面找，而当前环境函数是在rq里面找
 		se = pick_next_entity(cfs_rq, curr);
+		// 获得调度单元的拥有cfsrq则循环向下寻找
 		cfs_rq = group_cfs_rq(se);
 	} while (cfs_rq);
 
+	// 获得调度单元的任务
 	p = task_of(se);
 
 	/*
@@ -7104,39 +7138,58 @@ again:
 	 * is a different task than we started out with, try and touch the
 	 * least amount of cfs_rqs.
 	 */
+	// 如果前一个任务和新任务不是相同的任务
 	if (prev != p) {
+	    // 获得前一个任务的调度单元
 		struct sched_entity *pse = &prev->se;
 
+		// 循环直到相同的tg的cfsrq
 		while (!(cfs_rq = is_same_group(se, pse))) {
+		  // 获得当前调度单元和前一个调度单元的深度
 			int se_depth = se->depth;
 			int pse_depth = pse->depth;
 
+			// 如果当前调度单元的深度小于等于前一个调度单元的深度
 			if (se_depth <= pse_depth) {
+			    // 将前一个调度单元加入其调度队列等待重新调度
 				put_prev_entity(cfs_rq_of(pse), pse);
+				// 获得前一个调度单元的父单元
 				pse = parent_entity(pse);
 			}
+			// 如果调度单元的深入大于前一个调度单元
 			if (se_depth >= pse_depth) {
+			    // 设置调度单元为cfsrq的下一个调度单元
 				set_next_entity(cfs_rq_of(se), se);
+				// 获得调度单元的父单元
 				se = parent_entity(se);
 			}
 		}
 
+		// 将前一个调度单元加入其调度队列等待重新调度
 		put_prev_entity(cfs_rq, pse);
+		// 设置调度单元为cfsrq的下一个调度单元
 		set_next_entity(cfs_rq, se);
 	}
 
+	// 进入完成分支
 	goto done;
 simple:
-#endif
+#endif  // 配置了公平调度组
 
+    // 将前一个任务重新加入rq的cfsrq中
 	put_prev_task(rq, prev);
 
 	do {
+	    // 挑选cfsrq的下一个调度单元
 		se = pick_next_entity(cfs_rq, NULL);
+		// 设置调度单元为cfsrq的下一个任务
 		set_next_entity(cfs_rq, se);
+		// 获得调度单元拥有的cfsrq
 		cfs_rq = group_cfs_rq(se);
+	// 只要se拥有cfsrq则继续向下循环
 	} while (cfs_rq);
 
+	// 获得调度单元的任务
 	p = task_of(se);
 
 done: __maybe_unused
@@ -7146,15 +7199,19 @@ done: __maybe_unused
 	 * the list, so our cfs_tasks list becomes MRU
 	 * one.
 	 */
+    // 将当前任务的调度单元放入cfs任务列表
 	list_move(&p->se.group_node, &rq->cfs_tasks);
 #endif
 
+    // 如果rq开启了高精度时钟则开启
 	if (hrtick_enabled(rq))
 		hrtick_start_fair(rq, p);
 
+	// 返回新任务
 	return p;
 
 idle:
+    // 进行idle平衡，获得新任务
 	new_tasks = idle_balance(rq, rf);
 
 	/*
@@ -7162,25 +7219,33 @@ idle:
 	 * possible for any higher priority task to appear. In that case we
 	 * must re-start the pick_next_entity() loop.
 	 */
+	// 如果获得新任务失败了，返回重试
 	if (new_tasks < 0)
 		return RETRY_TASK;
 
+	// 如果新任务大于零则重新调度
 	if (new_tasks > 0)
 		goto again;
 
+	// 没有任务调度返回空
 	return NULL;
 }
 
 /*
  * Account for a descheduled task:
  */
+// 将前一个任务放回
 static void put_prev_task_fair(struct rq *rq, struct task_struct *prev)
 {
+    // 前一个任务的调度单元
 	struct sched_entity *se = &prev->se;
 	struct cfs_rq *cfs_rq;
 
+	// 向父级迭代每一个调度单元
 	for_each_sched_entity(se) {
+	    // 获得调度单元的cfsrq
 		cfs_rq = cfs_rq_of(se);
+		// 将调度单元放回对应的cfsrq
 		put_prev_entity(cfs_rq, se);
 	}
 }
@@ -10460,10 +10525,13 @@ const struct sched_class fair_sched_class = {
 
 	.check_preempt_curr	= check_preempt_wakeup,
 
+	// ok
 	.pick_next_task		= pick_next_task_fair,
+	// ok
 	.put_prev_task		= put_prev_task_fair,
 
 #ifdef CONFIG_SMP
+	// doing
 	.select_task_rq		= select_task_rq_fair,
 	.migrate_task_rq	= migrate_task_rq_fair,
 
