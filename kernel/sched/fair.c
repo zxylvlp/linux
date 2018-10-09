@@ -880,8 +880,10 @@ static void update_curr(struct cfs_rq *cfs_rq)
 	account_cfs_rq_runtime(cfs_rq, delta_exec);
 }
 
+// 公平更新当前任务
 static void update_curr_fair(struct rq *rq)
 {
+    // 对rq的当前任务的调度单元所属的cfsrq调用更新当前
 	update_curr(cfs_rq_of(&rq->curr->se));
 }
 
@@ -5575,6 +5577,7 @@ static void
 enqueue_task_fair(struct rq *rq, struct task_struct *p, int flags)
 {
 	struct cfs_rq *cfs_rq;
+	// 获得任务的调度单元
 	struct sched_entity *se = &p->se;
 
 	/*
@@ -6760,37 +6763,52 @@ select_task_rq_fair(struct task_struct *p, int prev_cpu, int sd_flag, int wake_f
 			break;
 	}
 
-	// 如果
+	// 如果有亲和调度域
 	if (affine_sd) {
+	    // 将调度域设置为空
 		sd = NULL; /* Prefer wake_affine over balance flags */
+		// 如果当前cpu和前一个cpu是相同的cpu
 		if (cpu == prev_cpu)
+		    // 去选择cpu
 			goto pick_cpu;
 
+		// 获得唤醒亲和的cpu
 		new_cpu = wake_affine(affine_sd, p, prev_cpu, sync);
 	}
 
+	// 如果有调度域并且不是fork调度
 	if (sd && !(sd_flag & SD_BALANCE_FORK)) {
 		/*
 		 * We're going to need the task's util for capacity_spare_wake
 		 * in find_idlest_group. Sync it up to prev_cpu's
 		 * last_update_time.
 		 */
+	    // 同步调度单元的负载平均
 		sync_entity_load_avg(&p->se);
 	}
 
+	// 如果调度单元为空
 	if (!sd) {
 pick_cpu:
+        // 如果是唤醒均衡
 		if (sd_flag & SD_BALANCE_WAKE) { /* XXX always ? */
+		    // 选择最空闲的兄弟cpu
 			new_cpu = select_idle_sibling(p, prev_cpu, new_cpu);
 
+			// 如果想要亲和
 			if (want_affine)
+			    // 设置当前任务的最近使用cpu
 				current->recent_used_cpu = cpu;
 		}
+	// 否则
 	} else {
+	    // 选择调度单元中最空闲的CPU
 		new_cpu = find_idlest_cpu(sd, p, cpu, prev_cpu, sd_flag);
 	}
+	// 解锁rcu
 	rcu_read_unlock();
 
+	// 返回新cpu
 	return new_cpu;
 }
 
@@ -6801,6 +6819,7 @@ static void detach_entity_cfs_rq(struct sched_entity *se);
  * cfs_rq_of(p) references at time of call are still valid and identify the
  * previous cpu. The caller guarantees p->pi_lock or task_rq(p)->lock is held.
  */
+// 公平的迁移任务的rq
 static void migrate_task_rq_fair(struct task_struct *p)
 {
 	/*
@@ -6809,11 +6828,15 @@ static void migrate_task_rq_fair(struct task_struct *p)
 	 * min_vruntime -- the latter is done by enqueue_entity() when placing
 	 * the task on the new runqueue.
 	 */
+    // 如果任务的状态是唤醒中
 	if (p->state == TASK_WAKING) {
+	    // 获得任务的调度单元
 		struct sched_entity *se = &p->se;
+		// 获得调度单元的cfsrq
 		struct cfs_rq *cfs_rq = cfs_rq_of(se);
 		u64 min_vruntime;
 
+		// 获得最小的vruntime
 #ifndef CONFIG_64BIT
 		u64 min_vruntime_copy;
 
@@ -6826,17 +6849,21 @@ static void migrate_task_rq_fair(struct task_struct *p)
 		min_vruntime = cfs_rq->min_vruntime;
 #endif
 
+		// 将调度单元的vruntime减去最小vruntime
 		se->vruntime -= min_vruntime;
 	}
 
+	// 如果任务在rq上正在迁移
 	if (p->on_rq == TASK_ON_RQ_MIGRATING) {
 		/*
 		 * In case of TASK_ON_RQ_MIGRATING we in fact hold the 'old'
 		 * rq->lock and can modify state directly.
 		 */
 		lockdep_assert_held(&task_rq(p)->lock);
+		// 将调度单元从cfsrq上摘掉
 		detach_entity_cfs_rq(&p->se);
 
+	// 否则
 	} else {
 		/*
 		 * We are supposed to update the task to "current" time, then
@@ -6846,13 +6873,16 @@ static void migrate_task_rq_fair(struct task_struct *p)
 		 * wakee task is less decayed, but giving the wakee more load
 		 * sounds not bad.
 		 */
+	    // 删除调度单元的负载平均
 		remove_entity_load_avg(&p->se);
 	}
 
 	/* Tell new CPU we are migrated */
+	// 设置任务调度单元的平均的最近更新时间为0
 	p->se.avg.last_update_time = 0;
 
 	/* We have migrated, no longer consider this task hot */
+	// 设置任务调度单元的执行开始为0
 	p->se.exec_start = 0;
 }
 
@@ -10063,34 +10093,50 @@ static void task_tick_fair(struct rq *rq, struct task_struct *curr, int queued)
  *  - child not yet on the tasklist
  *  - preemption disabled
  */
+// 公平fork任务
 static void task_fork_fair(struct task_struct *p)
 {
 	struct cfs_rq *cfs_rq;
+	// 获得任务的调度单元
 	struct sched_entity *se = &p->se, *curr;
+	// 获得当前cpu的rq
 	struct rq *rq = this_rq();
 	struct rq_flags rf;
 
+	// 对rq加锁
 	rq_lock(rq, &rf);
+	// 更新rq时钟
 	update_rq_clock(rq);
 
+	// 获得当前任务的cfsrq
 	cfs_rq = task_cfs_rq(current);
+	// 获得当前任务
 	curr = cfs_rq->curr;
+	// 如果当前任务不为空
 	if (curr) {
+	    // 更新当前cfsrq
 		update_curr(cfs_rq);
+		// 设置调度单元的vruntime为当前任务的vruntime
 		se->vruntime = curr->vruntime;
 	}
+	// 将调度单元放置到cfsrq里面
 	place_entity(cfs_rq, se, 1);
 
+	// 如果配置了子进程优先运行并且当前任务存在并且当前任务要先于子进程运行
 	if (sysctl_sched_child_runs_first && curr && entity_before(curr, se)) {
 		/*
 		 * Upon rescheduling, sched_class::put_prev_task() will place
 		 * 'current' within the tree based on its new key value.
 		 */
+	    // 交换当前进程和子进程的vruntime
 		swap(curr->vruntime, se->vruntime);
+		// 重调度当前rq
 		resched_curr(rq);
 	}
 
+	// 将调度单元的vruntime减去cfsrq的最小vruntime
 	se->vruntime -= cfs_rq->min_vruntime;
+	// 解锁rq
 	rq_unlock(rq, &rf);
 }
 
@@ -10299,14 +10345,19 @@ static void task_move_group_fair(struct task_struct *p)
 	attach_task_cfs_rq(p);
 }
 
+// 公平的改变任务的任务组
 static void task_change_group_fair(struct task_struct *p, int type)
 {
 	switch (type) {
+    // 如果是设置组类型
 	case TASK_SET_GROUP:
+	    // 公平的设置任务组
 		task_set_group_fair(p);
 		break;
 
+	// 如果是移动组类型
 	case TASK_MOVE_GROUP:
+	    // 公平的移动任务组
 		task_move_group_fair(p);
 		break;
 	}
@@ -10497,19 +10548,24 @@ void unregister_fair_sched_group(struct task_group *tg) { }
 
 #endif /* CONFIG_FAIR_GROUP_SCHED */
 
-
+// 公平的获得rr间隔
 static unsigned int get_rr_interval_fair(struct rq *rq, struct task_struct *task)
 {
+    // 获得任务的调度单元
 	struct sched_entity *se = &task->se;
+	// 初始化rr间隔为0
 	unsigned int rr_interval = 0;
 
 	/*
 	 * Time slice is 0 for SCHED_OTHER tasks that are on an otherwise
 	 * idle runqueue:
 	 */
+	// 如果rq的cfsrq的负载权重不为0
 	if (rq->cfs.load.weight)
+	    // 设置rr间隔为调度单元的调度片转换成jiffies
 		rr_interval = NS_TO_JIFFIES(sched_slice(cfs_rq_of(se), se));
 
+	// 返回rr间隔
 	return rr_interval;
 }
 
@@ -10517,7 +10573,9 @@ static unsigned int get_rr_interval_fair(struct rq *rq, struct task_struct *task
  * All the scheduling class methods:
  */
 const struct sched_class fair_sched_class = {
+    // 下一个调度类是idle调度类
 	.next			= &idle_sched_class,
+	// doing
 	.enqueue_task		= enqueue_task_fair,
 	.dequeue_task		= dequeue_task_fair,
 	.yield_task		= yield_task_fair,
@@ -10531,8 +10589,9 @@ const struct sched_class fair_sched_class = {
 	.put_prev_task		= put_prev_task_fair,
 
 #ifdef CONFIG_SMP
-	// doing
+	// ok
 	.select_task_rq		= select_task_rq_fair,
+	// ok
 	.migrate_task_rq	= migrate_task_rq_fair,
 
 	.rq_online		= rq_online_fair,
@@ -10543,18 +10602,23 @@ const struct sched_class fair_sched_class = {
 #endif
 
 	.set_curr_task          = set_curr_task_fair,
+	// ok
 	.task_tick		= task_tick_fair,
+	// ok
 	.task_fork		= task_fork_fair,
 
 	.prio_changed		= prio_changed_fair,
 	.switched_from		= switched_from_fair,
 	.switched_to		= switched_to_fair,
 
+	// ok
 	.get_rr_interval	= get_rr_interval_fair,
 
+	// ok
 	.update_curr		= update_curr_fair,
 
 #ifdef CONFIG_FAIR_GROUP_SCHED
+	// ok
 	.task_change_group	= task_change_group_fair,
 #endif
 };
