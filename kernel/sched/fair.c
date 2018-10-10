@@ -5585,13 +5585,19 @@ enqueue_task_fair(struct rq *rq, struct task_struct *p, int flags)
 	 * utilization updates, so do it here explicitly with the IOWAIT flag
 	 * passed.
 	 */
+	// 如果在iowait状态
 	if (p->in_iowait)
+	    // 更新cpu频率利用率
 		cpufreq_update_util(rq, SCHED_CPUFREQ_IOWAIT);
 
+	// 向上遍历每一个调度单元
 	for_each_sched_entity(se) {
+	    // 如果调度单元在rq上则跳出循环
 		if (se->on_rq)
 			break;
+		// 获得调度单元的cfsrq
 		cfs_rq = cfs_rq_of(se);
+		// 将调度单元加入cfsrq
 		enqueue_entity(cfs_rq, se, flags);
 
 		/*
@@ -5600,27 +5606,38 @@ enqueue_task_fair(struct rq *rq, struct task_struct *p, int flags)
 		 * note: in the case of encountering a throttled cfs_rq we will
 		 * post the final h_nr_running increment below.
 		 */
+		// 如果cfsrq被限速则跳出循环
 		if (cfs_rq_throttled(cfs_rq))
 			break;
+		// 将cfsrq的运行数量加1
 		cfs_rq->h_nr_running++;
 
+		// 将标志设置为唤醒入队
 		flags = ENQUEUE_WAKEUP;
 	}
 
+	// 向上遍历调度单元
 	for_each_sched_entity(se) {
+	    // 获得调度单元的cfsrq
 		cfs_rq = cfs_rq_of(se);
+		// 将cfsrq的运行数量加1
 		cfs_rq->h_nr_running++;
 
+		// 如果cfsrq被限速则跳出循环
 		if (cfs_rq_throttled(cfs_rq))
 			break;
 
+		// 更新负载平均和cfs组
 		update_load_avg(cfs_rq, se, UPDATE_TG);
 		update_cfs_group(se);
 	}
 
+	// 如果调度单元为空
 	if (!se)
+	    // 添加运行数
 		add_nr_running(rq, 1);
 
+	// 更新rq的高精度tick
 	hrtick_update(rq);
 }
 
@@ -5631,14 +5648,20 @@ static void set_next_buddy(struct sched_entity *se);
  * decreased. We remove the task from the rbtree and
  * update the fair scheduling stats:
  */
+// 公平的将任务出队
 static void dequeue_task_fair(struct rq *rq, struct task_struct *p, int flags)
 {
 	struct cfs_rq *cfs_rq;
+	// 获得任务的调度单元
 	struct sched_entity *se = &p->se;
+	// 将任务睡眠设置为标志中是否包含出队睡眠
 	int task_sleep = flags & DEQUEUE_SLEEP;
 
+	// 向上遍历每一个调度单元
 	for_each_sched_entity(se) {
+	    // 获得调度单元的cfsrq
 		cfs_rq = cfs_rq_of(se);
+		// 将调度单元从调度队列中删除
 		dequeue_entity(cfs_rq, se, flags);
 
 		/*
@@ -5647,39 +5670,54 @@ static void dequeue_task_fair(struct rq *rq, struct task_struct *p, int flags)
 		 * note: in the case of encountering a throttled cfs_rq we will
 		 * post the final h_nr_running decrement below.
 		*/
+		// 如果cfsrq被限速则跳出
 		if (cfs_rq_throttled(cfs_rq))
 			break;
+		// 将cfsrq的运行数目减1
 		cfs_rq->h_nr_running--;
 
 		/* Don't dequeue parent if it has other entities besides us */
+		// 如果cfsrq负载权重不为0
 		if (cfs_rq->load.weight) {
 			/* Avoid re-evaluating load for this entity: */
+		    // 将调度单元设置为调度单元的父单元
 			se = parent_entity(se);
 			/*
 			 * Bias pick_next to pick a task from this cfs_rq, as
 			 * p is sleeping when it is within its sched_slice.
 			 */
+			// 如果任务睡眠并且调度单元不为空并且cfsrq没有限速则设置调度单元为cfsrq的下一个调度单元
 			if (task_sleep && se && !throttled_hierarchy(cfs_rq))
 				set_next_buddy(se);
+			// 跳出循环
 			break;
 		}
+		// 将flag中的出队睡眠标记打上
 		flags |= DEQUEUE_SLEEP;
 	}
 
+	// 向上遍历每一个调度单元
 	for_each_sched_entity(se) {
+	    // 获得调度单元的cfsrq
 		cfs_rq = cfs_rq_of(se);
+		// 将cfsrq的运行数减1
 		cfs_rq->h_nr_running--;
 
+		// 如果cfsrq被限速则跳出循环
 		if (cfs_rq_throttled(cfs_rq))
 			break;
 
+		// 更新负载平均和cfs组
 		update_load_avg(cfs_rq, se, UPDATE_TG);
 		update_cfs_group(se);
 	}
 
+	// 如果调度单元不为空
 	if (!se)
+	    // 将rq的运行数目减1
 		sub_nr_running(rq, 1);
 
+	// 更新rq的高精度tick
 	hrtick_update(rq);
 }
 
@@ -10575,8 +10613,9 @@ static unsigned int get_rr_interval_fair(struct rq *rq, struct task_struct *task
 const struct sched_class fair_sched_class = {
     // 下一个调度类是idle调度类
 	.next			= &idle_sched_class,
-	// doing
+	// ok
 	.enqueue_task		= enqueue_task_fair,
+	// ok
 	.dequeue_task		= dequeue_task_fair,
 	.yield_task		= yield_task_fair,
 	.yield_to_task		= yield_to_task_fair,
