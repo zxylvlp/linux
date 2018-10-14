@@ -7045,8 +7045,10 @@ static void check_preempt_wakeup(struct rq *rq, struct task_struct *p, int wake_
 	struct cfs_rq *cfs_rq = task_cfs_rq(curr);
 	// 如果当前任务的cfsrq的运行进程数大于调度延迟的进程数，则设置扩容为真
 	int scale = cfs_rq->nr_running >= sched_nr_latency;
+	// 设置下一个伙伴标记为假
 	int next_buddy_marked = 0;
 
+	// 如果调度单元和新唤醒任务的调度单元相同则返回
 	if (unlikely(se == pse))
 		return;
 
@@ -7056,11 +7058,15 @@ static void check_preempt_wakeup(struct rq *rq, struct task_struct *p, int wake_
 	 * lead to a throttle).  This both saves work and prevents false
 	 * next-buddy nomination below.
 	 */
+	// 如果新任务的cfsrq被限速则返回
 	if (unlikely(throttled_hierarchy(cfs_rq_of(pse))))
 		return;
 
+	// 如果打开了下一个伙伴功能，并且扩容并且不是fork
 	if (sched_feat(NEXT_BUDDY) && scale && !(wake_flags & WF_FORK)) {
+	    // 则设置下一个伙伴为新唤醒任务
 		set_next_buddy(pse);
+		// 设置下一个伙伴标记为真
 		next_buddy_marked = 1;
 	}
 
@@ -7074,10 +7080,12 @@ static void check_preempt_wakeup(struct rq *rq, struct task_struct *p, int wake_
 	 * prevents us from potentially nominating it as a false LAST_BUDDY
 	 * below.
 	 */
+	// 如果当前任务已经被标记为抢占则返回
 	if (test_tsk_need_resched(curr))
 		return;
 
 	/* Idle tasks are by definition preempted by non-idle tasks. */
+	// 如果当前任务是idle任务则进行抢占
 	if (unlikely(curr->policy == SCHED_IDLE) &&
 	    likely(p->policy != SCHED_IDLE))
 		goto preempt;
@@ -7086,25 +7094,35 @@ static void check_preempt_wakeup(struct rq *rq, struct task_struct *p, int wake_
 	 * Batch and idle tasks do not preempt non-idle tasks (their preemption
 	 * is driven by the tick):
 	 */
+	// 新任务是batch任务和idle任务或者关闭了唤醒抢占则返回
 	if (unlikely(p->policy != SCHED_NORMAL) || !sched_feat(WAKEUP_PREEMPTION))
 		return;
 
+	// 找到当前任务调度单元和新任务调度单元的同层单元
 	find_matching_se(&se, &pse);
+	// 更新当前任务调度单元的cfsrq
 	update_curr(cfs_rq_of(se));
 	BUG_ON(!pse);
+	// 如果新任务应该抢占当前任务
 	if (wakeup_preempt_entity(se, pse) == 1) {
 		/*
 		 * Bias pick_next to pick the sched entity that is
 		 * triggering this preemption.
 		 */
+	    // 如果下一个伙伴没有标记
 		if (!next_buddy_marked)
+		    // 设置下一个伙伴为新调度单元
 			set_next_buddy(pse);
+		// 进行抢占
 		goto preempt;
 	}
 
+	// 返回
 	return;
 
+// 抢占过程
 preempt:
+    // 重调度当前任务
 	resched_curr(rq);
 	/*
 	 * Only set the backward buddy when the current task is still
@@ -7115,10 +7133,13 @@ preempt:
 	 * Also, during early boot the idle thread is in the fair class,
 	 * for obvious reasons its a bad idea to schedule back to it.
 	 */
+	// 如果调度单元不在rq上或者当前任务是idle则返回
 	if (unlikely(!se->on_rq || curr == rq->idle))
 		return;
 
+	// 如果开启下一个伙伴并且扩容并且调度单元是任务
 	if (sched_feat(LAST_BUDDY) && scale && entity_is_task(se))
+	    // 设置上一个伙伴为当前任务
 		set_last_buddy(se);
 }
 
@@ -7323,50 +7344,67 @@ static void put_prev_task_fair(struct rq *rq, struct task_struct *prev)
  *
  * The magic of dealing with the ->skip buddy is in pick_next_entity.
  */
+// 公平的yield任务
 static void yield_task_fair(struct rq *rq)
 {
+    // 获得rq的当前任务
 	struct task_struct *curr = rq->curr;
+	// 获得当前任务的cfsrq
 	struct cfs_rq *cfs_rq = task_cfs_rq(curr);
+	// 获得当前任务的调度单元
 	struct sched_entity *se = &curr->se;
 
 	/*
 	 * Are we the only task in the tree?
 	 */
+	// 如果rq里面只有一个任务在运行则返回
 	if (unlikely(rq->nr_running == 1))
 		return;
 
+	// 清除cfsrq中是se的伙伴
 	clear_buddies(cfs_rq, se);
 
+	// 如果策略不是batch
 	if (curr->policy != SCHED_BATCH) {
+	    // 更新rq时钟
 		update_rq_clock(rq);
 		/*
 		 * Update run-time statistics of the 'current'.
 		 */
+		// 更新cfsrq
 		update_curr(cfs_rq);
 		/*
 		 * Tell update_rq_clock() that we've just updated,
 		 * so we don't do microscopic update in schedule()
 		 * and double the fastpath cost.
 		 */
+		// rq时钟跳过更新
 		rq_clock_skip_update(rq, true);
 	}
 
+	// 设置当前调度单元为跳过伙伴
 	set_skip_buddy(se);
 }
 
+// 公平的让出给任务
 static bool yield_to_task_fair(struct rq *rq, struct task_struct *p, bool preempt)
 {
+    // 获得任务的调度单元
 	struct sched_entity *se = &p->se;
 
 	/* throttled hierarchies are not runnable */
+	// 如果调度单元不在rq上或者调度单元的cfsrq被限速则返回失败
 	if (!se->on_rq || throttled_hierarchy(cfs_rq_of(se)))
 		return false;
 
 	/* Tell the scheduler that we'd really like pse to run next. */
+	// 设置调度单元为下一个伙伴任务
 	set_next_buddy(se);
 
+	// 公平的交出任务
 	yield_task_fair(rq);
 
+	// 返回真
 	return true;
 }
 
@@ -10617,9 +10655,12 @@ const struct sched_class fair_sched_class = {
 	.enqueue_task		= enqueue_task_fair,
 	// ok
 	.dequeue_task		= dequeue_task_fair,
+	// ok
 	.yield_task		= yield_task_fair,
+	// ok
 	.yield_to_task		= yield_to_task_fair,
 
+	// ok
 	.check_preempt_curr	= check_preempt_wakeup,
 
 	// ok
